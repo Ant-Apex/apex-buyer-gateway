@@ -5,11 +5,13 @@
 import { loadConfig } from "./config.js";
 import { Mux } from "./mux.js";
 import { startApi } from "./api.js";
+import { startSweeper } from "./sweeper.js";
 import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const cfg = loadConfig();
 const mux = new Mux(cfg);
+startSweeper(cfg, process.env.MUX_MASTER_KEY!);
 
 // Ре-аттачим всех известных юзеров с диска (peerId → userId=peerId по умолчанию;
 // гейтвей при первом запросе может пере-attach с реальным userId).
