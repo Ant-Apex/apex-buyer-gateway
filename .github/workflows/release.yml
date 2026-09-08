@@ -38,7 +38,14 @@ jobs:
         run: |
           MUXD="apexant/mux@${{ steps.mux.outputs.digest }}"
           GWD="apexant/gw@${{ steps.gw.outputs.digest }}"
-          sed -e "s|image: apexant/mux.*|image: ${MUXD}|" -e "s|image: apexant/gw.*|image: ${GWD}|" deploy/docker-compose.yml > deploy/docker-compose.pinned.yml
+          python3 - <<PYC
+          import re
+          src = open("deploy/docker-compose.yml").read()
+          src = re.sub(r"    build:\n      context: \.\.\n      dockerfile: deploy/\S+\n", "", src)
+          src = re.sub(r"image: apexant/mux.*", "image: ${MUXD}", src)
+          src = re.sub(r"image: apexant/gw.*", "image: ${GWD}", src)
+          open("deploy/docker-compose.pinned.yml","w").write(src)
+          PYC
           python3 - <<PY
           import json, datetime
           m = {"releasedAt": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
