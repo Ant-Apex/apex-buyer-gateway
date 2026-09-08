@@ -1,0 +1,27 @@
+{
+  "name": "apex-mux-buyer",
+  "version": "0.1.0",
+  "description": "Apex Gateway — multi-account pinned AntSeed buyer. One process, N user identities, all settling to Apex Ant seller over AntSeed payment channels.",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "@antseed/protocol": "0.1.4",
+    "@antseed/buyer-core": "0.1.8",
+    "@antseed/node": "0.2.117",
+    "ethers": "^6.13.0",
+    "better-sqlite3": "^11.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "tsx src/main.ts",
+    "conformance": "tsx conformance/run.ts"
+  }
+}

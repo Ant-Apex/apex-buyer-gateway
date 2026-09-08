@@ -1,0 +1,12 @@
+{
+  "name": "apex-gw",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "ethers": "^6.13.0"
+  },
+  "scripts": { "start": "node main.mjs" }
+}
