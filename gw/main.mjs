@@ -19,6 +19,7 @@ const MUX_TOKEN = process.env.MUX_INTERNAL_TOKEN ?? (() => { throw new Error("MU
 const CATALOG_URL = process.env.GW_CATALOG_URL ?? "http://127.0.0.1:8377/v1/models";
 const OUR_PEER = process.env.GW_SELLER_PEER ?? "73b4c9335fa239f9c6df3d28d5bf5d3cdf4de736";
 const SITE_ORIGIN = process.env.GW_SITE_ORIGIN ?? "https://next.apex-ant.net";
+const SITE_DOMAIN = new URL(SITE_ORIGIN).host;
 const DEPOSITS_ADDR = process.env.GW_DEPOSITS_ADDR ?? "";
 const USDC_ADDR = process.env.GW_USDC_ADDR ?? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const KEY_PREFIX = process.env.GW_KEY_PREFIX ?? "apx_test";
@@ -176,7 +177,7 @@ createServer(async (req, res) => {
       const nonce = randomBytes(8).toString("hex");
       db.prepare("INSERT OR REPLACE INTO challenges VALUES (?,?,?)").run(address.toLowerCase(), nonce, Date.now());
       const message = [
-        `next.apex-ant.net wants you to sign in with your wallet:`,
+        `${SITE_DOMAIN} wants you to sign in with your wallet:`,
         ``,
         address,
         ``,
@@ -191,7 +192,7 @@ createServer(async (req, res) => {
       const ch = db.prepare("SELECT nonce, ts FROM challenges WHERE address=?").get((address ?? "").toLowerCase());
       if (!ch || Date.now() - ch.ts > 10 * 60e3) return json(res, 400, { error: "challenge_expired" });
       const message = [
-        `next.apex-ant.net wants you to sign in with your wallet:`, ``, address, ``,
+        `${SITE_DOMAIN} wants you to sign in with your wallet:`, ``, address, ``,
         `No transaction, no gas, no permissions — this signature only proves ownership.`,
         ``, `URI: ${SITE_ORIGIN}`, `Version: 1`, `Chain ID: 8453`, `Nonce: ${ch.nonce}`,
       ].join("\n");
