@@ -51,7 +51,7 @@ jobs:
           git commit -m "release: pin digests for ${{ github.sha }}" || echo "no change"
           git push
       - name: deploy to Phala CVM (manual trigger only; env stays in CVM)
-        if: github.event_name == workflow_dispatch
+        if: github.event_name == 'workflow_dispatch'
         env:
           PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_API_KEY }}
         run: |
