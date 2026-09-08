@@ -7,6 +7,8 @@ on:
 jobs:
   build-push-attest:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -49,7 +51,7 @@ jobs:
           git config user.email "ci@apex-ant.net"; git config user.name "apex-ci"
           git add attestation.json deploy/docker-compose.pinned.yml
           git commit -m "release: pin digests for ${{ github.sha }}" || echo "no change"
-          git push
+          git push origin HEAD:main
       - name: deploy to Phala CVM (manual trigger only; env stays in CVM)
         if: github.event_name == 'workflow_dispatch'
         env:
