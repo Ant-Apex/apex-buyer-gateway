@@ -22,7 +22,7 @@ const SITE_ORIGIN = process.env.GW_SITE_ORIGIN ?? "https://next.apex-ant.net";
 const SITE_DOMAIN = new URL(SITE_ORIGIN).host;
 const DEPOSITS_ADDR = process.env.GW_DEPOSITS_ADDR ?? "";
 const USDC_ADDR = process.env.GW_USDC_ADDR ?? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-const KEY_PREFIX = process.env.GW_KEY_PREFIX ?? "apx_test";
+const KEY_PREFIX = process.env.GW_KEY_PREFIX ?? "apx";
 
 // ── db ──
 const db = new Database(join(process.env.GW_DATA_DIR ?? "./gw-data", "gw.db"));
@@ -81,7 +81,7 @@ function cabinetAuth(req) {
 // ── apx_ ключи ──
 function keyAuth(req) {
   const k = (req.headers.authorization ?? "").replace(/^Bearer /, "");
-  if (!k.startsWith(KEY_PREFIX + "_") && !k.startsWith("apx_test_")) return null; // legacy test keys keep working
+  if (!k.startsWith(KEY_PREFIX + "_") && !k.startsWith("apx_test_") && !k.startsWith("apx_live_")) return null; // legacy prefixes keep working
   const row = db.prepare("SELECT id, wallet FROM keys WHERE keyHash=? AND revoked=0").get(sha256(k));
   return row ? { wallet: row.wallet, keyId: row.id } : null;
 }
