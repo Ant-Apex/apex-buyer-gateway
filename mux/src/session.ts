@@ -239,7 +239,7 @@ export class UserSession extends EventEmitter {
     req: SerializedHttpRequest,
     callbacks?: {
       onResponseStart?: (r: SerializedHttpResponse, meta: { streaming: boolean }) => void;
-      onChunk?: (c: SerializedHttpResponseChunk) => void;
+      onResponseChunk?: (c: SerializedHttpResponseChunk) => void;
     },
     signal?: AbortSignal,
   ): Promise<SerializedHttpResponse> {

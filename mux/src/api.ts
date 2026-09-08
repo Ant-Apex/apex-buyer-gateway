@@ -77,7 +77,7 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
               });
             }
           },
-          onChunk: (c) => { if (headSent && c.data.length) res.write(Buffer.from(c.data)); },
+          onResponseChunk: (c) => { if (headSent && c.data.length) res.write(Buffer.from(c.data)); },
         }, req.aborted ? undefined : undefined);
 
         if (!headSent) {
