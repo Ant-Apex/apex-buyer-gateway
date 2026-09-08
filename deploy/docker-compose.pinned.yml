@@ -2,23 +2,45 @@
 # with sha256 digests — that pinned file is what the TEE measurement covers.
 services:
   mux:
-    image: apexant/mux@sha256:d77d95bf0c5736c63b6d7cf36cf405b60b102db4ff957d33ea7b87027e9c91aa
+    image: apexant/mux@sha256:9eee2f9ca2dc95baff980636189844028a5de7fe21d92ea3ceccc84950271c00
     build:
       context: ..
       dockerfile: deploy/Dockerfile.mux
     restart: unless-stopped
     volumes:
       - mux-data:/data
+    environment:
+      - MUX_DATA_DIR=${MUX_DATA_DIR}
+      - MUX_INTERNAL_TOKEN=${MUX_INTERNAL_TOKEN}
+      - MUX_LISTEN_HOST=${MUX_LISTEN_HOST}
+      - MUX_LISTEN_PORT=${MUX_LISTEN_PORT}
+      - MUX_MASTER_KEY=${MUX_MASTER_KEY}
+      - MUX_RPC_FALLBACKS=${MUX_RPC_FALLBACKS}
+      - MUX_RPC_URL=${MUX_RPC_URL}
+      - MUX_SELLER_ADDRESS=${MUX_SELLER_ADDRESS}
+      - MUX_SELLER_CAPS=${MUX_SELLER_CAPS}
+      - MUX_SELLER_PEER_ID=${MUX_SELLER_PEER_ID}
     expose:
       - "8410"
   gw:
-    image: apexant/gw@sha256:ce00982c11f0d9b369eae37cb9602c97bf5c7ee7cb5476217edeb24f6b9d0971
+    image: apexant/gw@sha256:4bdb40ef84b7c7a6b8dde522070401c4ca67d72e7717b968383f7a3466089c0d
     build:
       context: ..
       dockerfile: deploy/Dockerfile.gw
     restart: unless-stopped
     depends_on:
       - mux
+    environment:
+      - GW_CATALOG_URL=${GW_CATALOG_URL}
+      - GW_DATA_DIR=${GW_DATA_DIR}
+      - GW_DEPOSITS_ADDR=${GW_DEPOSITS_ADDR}
+      - GW_HMAC_SECRET=${GW_HMAC_SECRET}
+      - GW_HOST=${GW_HOST}
+      - GW_PORT=${GW_PORT}
+      - GW_SITE_ORIGIN=${GW_SITE_ORIGIN}
+      - GW_USDC_ADDR=${GW_USDC_ADDR}
+      - MUX_INTERNAL_TOKEN=${MUX_INTERNAL_TOKEN}
+      - MUX_URL=${MUX_URL}
     ports:
       - "8420:8420"
 volumes:
