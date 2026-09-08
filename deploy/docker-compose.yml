@@ -1,0 +1,26 @@
+# Source compose (tags). CI builds from this; deploy uses docker-compose.pinned.yml
+# with sha256 digests — that pinned file is what the TEE measurement covers.
+services:
+  mux:
+    image: apexant/mux:staging
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.mux
+    restart: unless-stopped
+    volumes:
+      - mux-data:/data
+    expose:
+      - "8410"
+  gw:
+    image: apexant/gw:staging
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gw
+    restart: unless-stopped
+    depends_on:
+      - mux
+    ports:
+      - "8420:8420"
+volumes:
+  mux-data:
+  gw-data:

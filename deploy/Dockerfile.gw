@@ -1,0 +1,8 @@
+FROM node:22-bookworm
+WORKDIR /app
+ENV NODE_ENV=production
+COPY gw/package.json gw/package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force && mkdir -p /data-gw
+COPY gw/main.mjs ./
+EXPOSE 8420
+CMD ["node", "main.mjs"]

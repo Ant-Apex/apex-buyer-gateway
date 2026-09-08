@@ -1,0 +1,15 @@
+FROM node:22-bookworm AS build
+WORKDIR /app
+COPY mux/package.json mux/package-lock.json ./
+RUN npm ci
+COPY mux/tsconfig.json ./
+COPY mux/src ./src
+RUN npm run build
+FROM node:22-bookworm
+WORKDIR /app
+ENV NODE_ENV=production
+COPY mux/package.json mux/package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=build /app/dist ./dist
+EXPOSE 8410
+CMD ["node", "dist/main.js"]
