@@ -2,10 +2,7 @@
 # with sha256 digests — that pinned file is what the TEE measurement covers.
 services:
   mux:
-    image: apexant/mux@sha256:9eee2f9ca2dc95baff980636189844028a5de7fe21d92ea3ceccc84950271c00
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.mux
+    image: apexant/mux@sha256:494cb946f75f29ae44bde099777c9b52163966f5f8087117abc404cff6350549
     restart: unless-stopped
     volumes:
       - mux-data:/data
@@ -23,10 +20,7 @@ services:
     expose:
       - "8410"
   gw:
-    image: apexant/gw@sha256:4bdb40ef84b7c7a6b8dde522070401c4ca67d72e7717b968383f7a3466089c0d
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.gw
+    image: apexant/gw@sha256:d160f4f07a35c20e264110b6ba164620fcf53e963b82e534bbda31e60b05aaf0
     restart: unless-stopped
     depends_on:
       - mux
