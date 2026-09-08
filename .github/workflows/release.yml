@@ -50,8 +50,10 @@ jobs:
           git add attestation.json deploy/docker-compose.pinned.yml
           git commit -m "release: pin digests for ${{ github.sha }}" || echo "no change"
           git push
-      - name: deploy to Phala CVM
-        if: ${{ secrets.PHALA_API_KEY !=  }}
+      - name: deploy to Phala CVM (manual trigger only; env stays in CVM)
+        if: github.event_name == workflow_dispatch
+        env:
+          PHALA_CLOUD_API_KEY: ${{ secrets.PHALA_API_KEY }}
         run: |
           npm i -g phala >/dev/null 2>&1
-          PHALA_CLOUD_API_KEY="${{ secrets.PHALA_API_KEY }}" phala deploy --cvm-id apex-staging -c deploy/docker-compose.pinned.yml -e deploy/cvm.env.enc --wait
+          phala deploy --cvm-id apex-staging -c deploy/docker-compose.pinned.yml --wait
