@@ -9,6 +9,17 @@ services:
     restart: unless-stopped
     volumes:
       - mux-data:/data
+    environment:
+      - MUX_DATA_DIR=${MUX_DATA_DIR}
+      - MUX_INTERNAL_TOKEN=${MUX_INTERNAL_TOKEN}
+      - MUX_LISTEN_HOST=${MUX_LISTEN_HOST}
+      - MUX_LISTEN_PORT=${MUX_LISTEN_PORT}
+      - MUX_MASTER_KEY=${MUX_MASTER_KEY}
+      - MUX_RPC_FALLBACKS=${MUX_RPC_FALLBACKS}
+      - MUX_RPC_URL=${MUX_RPC_URL}
+      - MUX_SELLER_ADDRESS=${MUX_SELLER_ADDRESS}
+      - MUX_SELLER_CAPS=${MUX_SELLER_CAPS}
+      - MUX_SELLER_PEER_ID=${MUX_SELLER_PEER_ID}
     expose:
       - "8410"
   gw:
@@ -19,6 +30,17 @@ services:
     restart: unless-stopped
     depends_on:
       - mux
+    environment:
+      - GW_CATALOG_URL=${GW_CATALOG_URL}
+      - GW_DATA_DIR=${GW_DATA_DIR}
+      - GW_DEPOSITS_ADDR=${GW_DEPOSITS_ADDR}
+      - GW_HMAC_SECRET=${GW_HMAC_SECRET}
+      - GW_HOST=${GW_HOST}
+      - GW_PORT=${GW_PORT}
+      - GW_SITE_ORIGIN=${GW_SITE_ORIGIN}
+      - GW_USDC_ADDR=${GW_USDC_ADDR}
+      - MUX_INTERNAL_TOKEN=${MUX_INTERNAL_TOKEN}
+      - MUX_URL=${MUX_URL}
     ports:
       - "8420:8420"
 volumes:
