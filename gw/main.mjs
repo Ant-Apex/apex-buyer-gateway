@@ -81,7 +81,7 @@ function cabinetAuth(req) {
 // ── apx_ ключи ──
 function keyAuth(req) {
   const k = (req.headers.authorization ?? "").replace(/^Bearer /, "");
-  if (!k.startsWith(KEY_PREFIX + "_")) return null;
+  if (!k.startsWith(KEY_PREFIX + "_") && !k.startsWith("apx_test_")) return null; // legacy test keys keep working
   const row = db.prepare("SELECT id, wallet FROM keys WHERE keyHash=? AND revoked=0").get(sha256(k));
   return row ? { wallet: row.wallet, keyId: row.id } : null;
 }
