@@ -299,6 +299,14 @@ createServer(async (req, res) => {
     }
 
     // ═══ OpenAI/Venice API ═══
+    if (url.pathname === "/" || url.pathname === "/healthz") {
+      // dstack v0.6 gateway health-gates published ports: unknown-path 404s
+      // (our previous behavior) leave the app unregistered ("not_found").
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, service: "apex-gw" }));
+      return;
+    }
+
     if (url.pathname === "/chat" || url.pathname.startsWith("/chat/")) {
       // 2026-09-09: chat SPA is baked into THIS image at CI build time (see
       // Dockerfile.gw) — the attested image digest covers the frontend bytes.
