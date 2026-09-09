@@ -25,6 +25,9 @@ jobs:
           push: true
           tags: apexant/mux:staging
           provenance: false
+      - name: resolve openvenice sha
+        id: ov
+        run: echo "sha=$(git ls-remote https://github.com/Ant-Apex/openvenice.git refs/heads/master | cut -c1-12)" >> "$GITHUB_OUTPUT"
       - name: build+push gw
         id: gw
         uses: docker/build-push-action@v6
@@ -34,6 +37,8 @@ jobs:
           push: true
           tags: apexant/gw:staging
           provenance: false
+          build-args: |
+            OV_REF=${{ steps.ov.outputs.sha }}
       - name: pin digests + manifest
         run: |
           MUXD="apexant/mux@${{ steps.mux.outputs.digest }}"
