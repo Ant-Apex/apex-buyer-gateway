@@ -299,6 +299,26 @@ createServer(async (req, res) => {
     }
 
     // ═══ OpenAI/Venice API ═══
+    if (url.pathname === "/chat" || url.pathname.startsWith("/chat/")) {
+      // 2026-09-09: chat SPA is baked into THIS image at CI build time (see
+      // Dockerfile.gw) — the attested image digest covers the frontend bytes.
+      const STATIC_ROOT = process.env.GW_STATIC_ROOT ?? "/srv/chat";
+      const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".json": "application/json", ".png": "image/png", ".woff2": "font/woff2", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json" };
+      try {
+        const rel = decodeURIComponent(url.pathname.slice(5)).replace(/\.\./g, "");
+        let fp = join(STATIC_ROOT, rel === "" || rel.endsWith("/") ? rel + "index.html" : rel);
+        let data;
+        try { data = readFileSync(fp); }
+        catch { fp = join(STATIC_ROOT, "index.html"); data = readFileSync(fp); } // SPA fallback
+        const ext = fp.slice(fp.lastIndexOf("."));
+        res.writeHead(200, { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": ext === ".html" ? "no-cache" : "public, max-age=86400" });
+        res.end(data);
+      } catch {
+        res.writeHead(404); res.end("chat bundle missing");
+      }
+      return;
+    }
+
     if (url.pathname === "/api/v1/models" && req.method === "GET") {
       const cat = await modelsCatalog();
       const t = url.searchParams.get("type");
