@@ -299,7 +299,7 @@ createServer(async (req, res) => {
       db.prepare("INSERT INTO keys VALUES (?,?,?,?,0)").run(id, wallet, sha256(key), Date.now());
       return json(res, 201, { id, key, warning: "shown once — store it" });
     }
-    const kd = url.pathname.match(/^\/cabinet\/keys\/(apx_[a-z]+_[A-Za-z0-9_-]{6})$/);
+    const kd = url.pathname.match(/^\/cabinet\/keys\/(apx_(?:[a-z]+_)?[A-Za-z0-9_-]{6})$/); // legacy apx_live_/apx_test_ и новый apx_
     if (kd && req.method === "DELETE") {
       const wallet = cabinetAuth(req);
       if (!wallet) return json(res, 401, { error: "auth" });
