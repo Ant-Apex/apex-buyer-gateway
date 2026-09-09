@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 ADD "https://github.com/Ant-Apex/openvenice/archive/${OV_REF}.tar.gz" /tmp/ov.tar.gz
 RUN mkdir -p /src && tar xzf /tmp/ov.tar.gz -C /src --strip-components=1
 WORKDIR /src
+ENV VITE_VENICE_BASE_URL=/api/v1
 RUN npm ci && npm run build
 
 FROM node:22-bookworm
