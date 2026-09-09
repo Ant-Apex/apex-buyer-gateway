@@ -1,9 +1,9 @@
 {
-  "releasedAt": "2026-09-08T22:17:26+00:00",
-  "commit": "f36d574a0a85309d90c27e84dfd23044b5e7f3b2",
+  "releasedAt": "2026-09-09T00:54:42+00:00",
+  "commit": "4adbc99a3beae0896ce30072d938c3c945df1083",
   "channel": "staging",
   "images": {
-    "mux": "apexant/mux@sha256:5c797365163ff195ba63e7f649045ab3ff28e4996af3bfed20931db6af44b3ef",
-    "gw": "apexant/gw@sha256:a647a876db85c9c3b2e50d46455428d246b4a092577bd9e518bddc8deeb79d75"
+    "mux": "apexant/mux@sha256:0a39cf5df89443ee437b246a2c076c6943ac857ae2e489defc6b945b30e1f5ad",
+    "gw": "apexant/gw@sha256:652700d9ccabcaad5dbb1ff4fad66b7378ce599bf6267150eb80ff574f66a9a0"
   }
 }
