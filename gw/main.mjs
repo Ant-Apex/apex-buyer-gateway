@@ -176,12 +176,16 @@ function limited(res, retryAfter, openaiShape = false) {
 }
 
 createServer(async (req, res) => {
-  const url = new URL(req.url ?? "/", "http://x");
+  let url = new URL(req.url ?? "/", "http://x");
   try {
     if (req.method === "OPTIONS") { res.writeHead(204, cors()); return res.end(); }
 
     const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "?").split(",")[0].trim();
     { const ra = limGlobal("ip:" + ip); if (ra) return limited(res, ra); }
+    // 2026-09-09: cabinet JS calls /api/auth/* — alias to the siwe handlers
+    // (wallet connect was 404ing on both domains).
+    if (url.pathname === "/api/auth/challenge") url = new URL("/cabinet/siwe/challenge", url);
+    else if (url.pathname === "/api/auth/verify") url = new URL("/cabinet/siwe/verify", url);
     if (url.pathname.startsWith("/cabinet/siwe/")) {
       const ra = limAuth("auth:" + ip); if (ra) return limited(res, ra);
     }
