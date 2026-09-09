@@ -95,21 +95,37 @@ async function muxCall(path, init = {}) {
 
 // ── каталог моделей (кэш 60с, фильтр на наш peer, Venice-shape адаптация) ──
 let catCache = { ts: 0, data: null };
+// 2026-09-09: sell prices overlay from our public board (prices.json) — the
+// network catalog's minImageUsdPerImage is a network-wide min, NOT our price
+// (pickers showed $0.0045 for a $0.1215 model).
+const PRICES_JSON_URL = process.env.GW_PRICES_URL ?? CATALOG_URL.replace(/\/v1\/models.*$/, "").replace(/\/catalog$/, "") + "/prices.json";
+async function pricesOverlay() {
+  try {
+    const r = await fetch(PRICES_JSON_URL, { signal: AbortSignal.timeout(8000) });
+    const pj = await r.json();
+    const map = {};
+    for (const m of pj.models ?? []) map[m.model] = { input: m.in ?? null, output: m.out ?? null, cached: m.cache ?? null };
+    for (const m of pj.images ?? []) map[m.model] = { perImage: m.perImage ?? null };
+    return map;
+  } catch { return {}; }
+}
+
 async function modelsCatalog() {
   if (Date.now() - catCache.ts < 60_000 && catCache.data) return catCache.data;
-  const r = await fetch(CATALOG_URL);
+  const [r, priceMap] = await Promise.all([fetch(CATALOG_URL), pricesOverlay()]);
   const j = await r.json();
   const out = [];
   for (const m of j.data ?? []) {
     const ours = (m.peers ?? []).find((p) => String(p.peerId ?? "").startsWith(OUR_PEER.slice(0, 10)));
     if (!ours) continue;
     const isImage = (m.supported_protocols ?? []).includes("openai-images");
+    const ov = priceMap[m.id];
     out.push({
       id: m.id, object: "model", created: 1720000000, owned_by: "apex-ant",
       type: isImage ? "image" : "text",
       pricing: isImage
-        ? { perImage: ours.minImageUsdPerImage ?? null }
-        : { input: ours.inputUsdPerMillion ?? null, output: ours.outputUsdPerMillion ?? null, cached: ours.cachedInputUsdPerMillion ?? null },
+        ? { perImage: ov?.perImage ?? ours.minImageUsdPerImage ?? null }
+        : { input: ov?.input ?? ours.inputUsdPerMillion ?? null, output: ov?.output ?? ours.outputUsdPerMillion ?? null, cached: ov?.cached ?? ours.cachedInputUsdPerMillion ?? null },
       model_spec: {
         name: m.id,
         pricing: ours.pricing ?? undefined,
