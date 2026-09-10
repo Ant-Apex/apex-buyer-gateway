@@ -18,6 +18,7 @@ services:
       - MUX_SELLER_ADDRESS=${MUX_SELLER_ADDRESS}
       - MUX_SELLER_CAPS=${MUX_SELLER_CAPS}
       - MUX_SELLER_PEER_ID=${MUX_SELLER_PEER_ID}
+      - MUX_CATALOG_URL=${MUX_CATALOG_URL}
     expose:
       - "8410"
   gw:
