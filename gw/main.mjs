@@ -5,7 +5,7 @@
  */
 import { createServer } from "node:http";
 import { createHmac, randomBytes, createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { verifyMessage } from "ethers";
@@ -25,7 +25,15 @@ const USDC_ADDR = process.env.GW_USDC_ADDR ?? "0x833589fCD6eDb6E08f4c7C32D4f71b5
 const KEY_PREFIX = process.env.GW_KEY_PREFIX ?? "apx";
 
 // ── db ──
-const db = new Database(join(process.env.GW_DATA_DIR ?? "./gw-data", "gw.db"));
+const GW_DIR = process.env.GW_DATA_DIR ?? "./gw-data";
+// одноразовый restore: /internal/restore-data кладёт restore.db + выходит;
+// после рестарта подменяем gw.db ДО открытия
+const RESTORE_DB = join(GW_DIR, "restore.db");
+if (existsSync(RESTORE_DB)) {
+  try { renameSync(RESTORE_DB, join(GW_DIR, "gw.db")); console.log("[gw] restore.db applied as gw.db"); }
+  catch (e) { console.error("[gw] restore apply failed:", String(e).slice(0, 120)); }
+}
+const db = new Database(join(GW_DIR, "gw.db"));
 db.exec(`
 CREATE TABLE IF NOT EXISTS users(wallet TEXT PRIMARY KEY, peerId TEXT UNIQUE, created INTEGER);
 CREATE TABLE IF NOT EXISTS keys(id TEXT PRIMARY KEY, wallet TEXT, keyHash TEXT, created INTEGER, revoked INTEGER DEFAULT 0);
@@ -264,6 +272,33 @@ createServer(async (req, res) => {
     }
 
     // импорт существующего байера: приватник (64 hex) или adopt по адресу (0x...) если ключ в нашем кейсторе
+    // ── одноразовая миграция CVM: заливка gw.db + buyer-идентичностей ──
+    // Bearer MUX_INTERNAL_TOKEN. Пишет restore.db (подменяется при ребуте,
+    // см. boot-блок выше), идентичности проксирует в mux /internal/import,
+    // отвечает и завершает процесс — docker restart применяет restore.
+    if (url.pathname === "/internal/restore-data" && req.method === "POST") {
+      if ((req.headers.authorization ?? "") !== `Bearer ${MUX_TOKEN}`)
+        return json(res, 401, { error: "auth" });
+      let raw = ""; for await (const c of req) { raw += c; if (raw.length > 10e6) return json(res, 413, { error: "too_big" }); }
+      let body; try { body = JSON.parse(raw); } catch { return json(res, 400, { error: "bad_json" }); }
+      const report = { dbWritten: false, imported: 0, errors: [] };
+      if (body.gwDbB64) {
+        const buf = Buffer.from(String(body.gwDbB64), "base64");
+        if (buf.length < 100 || buf.length > 8e6) return json(res, 400, { error: "bad_db_size" });
+        writeFileSync(RESTORE_DB, buf, { mode: 0o600 });
+        report.dbWritten = true;
+      }
+      for (const it of body.identities ?? []) {
+        try {
+          const r = await muxCall("/internal/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: it.userId, privateKey: it.privateKey }) });
+          if (r.ok) report.imported++; else report.errors.push(`${it.userId}: mux ${r.status}`);
+        } catch (e) { report.errors.push(`${it.userId}: ${String(e).slice(0, 80)}`); }
+      }
+      json(res, 200, { ok: true, ...report, restarting: report.dbWritten });
+      if (report.dbWritten) setTimeout(() => process.exit(0), 500);
+      return;
+    }
+
     if (url.pathname === "/cabinet/import-buyer" && req.method === "POST") {
       const wallet = cabinetAuth(req);
       if (!wallet) return json(res, 401, { error: "auth" });
