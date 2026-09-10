@@ -238,6 +238,25 @@ createServer(async (req, res) => {
       return json(res, 201, created);
     }
 
+    // импорт существующего байера: приватник (64 hex) или adopt по адресу (0x...) если ключ в нашем кейсторе
+    if (url.pathname === "/cabinet/import-buyer" && req.method === "POST") {
+      const wallet = cabinetAuth(req);
+      if (!wallet) return json(res, 401, { error: "auth" });
+      let input = ""; try { input = String((await readJson(req)).input || "").trim(); } catch {}
+      const isKey = /^(0x)?[0-9a-fA-F]{64}$/.test(input);
+      const isAddr = /^0x[0-9a-fA-F]{40}$/.test(input);
+      if (!isKey && !isAddr) return json(res, 400, { error: "paste_private_key_or_address" });
+      const r = await muxCall(isKey ? "/internal/import" : "/internal/adopt", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(isKey ? { userId: wallet, privateKey: input } : { userId: wallet, address: input }),
+      }).then(x => x.json()).catch(() => null);
+      if (!r?.peerId) return json(res, r?.error === "address_not_in_keystore" ? 404 : 502, { error: r?.error || "mux_failed" });
+      const conflict = db.prepare("SELECT wallet FROM users WHERE peerId=? AND wallet!=?").get(r.peerId, wallet);
+      if (conflict) return json(res, 409, { error: "linked_to_other_wallet" });
+      db.prepare("INSERT INTO users VALUES (?,?,?) ON CONFLICT(wallet) DO UPDATE SET peerId=excluded.peerId").run(wallet, r.peerId, Date.now());
+      return json(res, 200, { ok: true, peerId: r.peerId, buyerAddress: r.buyerAddress });
+    }
+
     if (url.pathname === "/cabinet/me" && req.method === "GET") {
       const wallet = cabinetAuth(req);
       if (!wallet) return json(res, 401, { error: "auth" });

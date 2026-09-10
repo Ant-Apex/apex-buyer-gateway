@@ -129,6 +129,18 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
           ? send(res, 200, { ok: true })
           : send(res, 404, { error: "unknown_peer" });
       }
+      if (url.pathname === "/internal/import" && req.method === "POST") {
+        const { userId, privateKey } = JSON.parse((await readBody(req, 4096)).toString("utf8") || "{}");
+        if (!userId || !privateKey) return send(res, 400, { error: "userId_and_privateKey_required" });
+        try { return send(res, 200, mux.importUser(userId, privateKey)); }
+        catch (e: any) { return send(res, 400, { error: String(e?.message ?? e).slice(0, 120) }); }
+      }
+      if (url.pathname === "/internal/adopt" && req.method === "POST") {
+        const { userId, address } = JSON.parse((await readBody(req, 4096)).toString("utf8") || "{}");
+        if (!userId || !address) return send(res, 400, { error: "userId_and_address_required" });
+        const r = mux.adoptUser(userId, address);
+        return r ? send(res, 200, r) : send(res, 404, { error: "address_not_in_keystore" });
+      }
       if (url.pathname === "/internal/export-key" && req.method === "POST") {
         const { peerId } = JSON.parse((await readBody(req, 4096)).toString("utf8") || "{}");
         const hex = mux.exportUserKey(peerId);

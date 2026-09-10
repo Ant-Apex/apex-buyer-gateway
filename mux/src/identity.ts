@@ -16,7 +16,7 @@
  * path disappears entirely; this module's interface stays unchanged.
  */
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { identityFromPrivateKeyHex, type Identity } from "@antseed/node";
 
@@ -53,6 +53,31 @@ export function createIdentity(dataDir: string, masterKeyHex: string): Identity 
   mkdirSync(join(dir, "payments"), { recursive: true });
   writeFileSync(join(dir, KEY_FILE), encrypt(masterKey, privateKeyHex), { mode: 0o600 });
   return identity;
+}
+
+/** Import identity from raw private key hex. Idempotent: если уже хранится — просто вернёт. */
+export function importIdentity(dataDir: string, masterKeyHex: string, privateKeyHex: string): Identity {
+  const clean = privateKeyHex.replace(/^0x/i, "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(clean)) throw new Error("invalid_private_key");
+  const masterKey = Buffer.from(masterKeyHex, "hex");
+  const identity = identityFromPrivateKeyHex(clean);
+  const dir = userDir(dataDir, identity.peerId);
+  if (existsSync(join(dir, KEY_FILE))) return identity;
+  mkdirSync(join(dir, "payments"), { recursive: true });
+  writeFileSync(join(dir, KEY_FILE), encrypt(masterKey, clean), { mode: 0o600 });
+  return identity;
+}
+
+/** Найти identity в кейсторе по EVM-адресу (adopt flow). Null если не нашёлся. */
+export function findIdentityByAddress(dataDir: string, masterKeyHex: string, address: string): Identity | null {
+  const want = address.toLowerCase();
+  const usersRoot = join(dataDir, "users");
+  if (!existsSync(usersRoot)) return null;
+  for (const peerId of readdirSync(usersRoot)) {
+    const id = loadIdentity(dataDir, masterKeyHex, peerId);
+    if (id && id.wallet.address.toLowerCase() === want) return id;
+  }
+  return null;
 }
 
 /** Load an existing identity by peerId. Returns null if unknown. */

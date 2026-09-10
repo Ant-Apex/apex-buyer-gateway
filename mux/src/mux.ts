@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import type { MuxConfig } from "./config.js";
 import { UserSession, type SpendEvent } from "./session.js";
-import { createIdentity, loadIdentity, exportIdentityHex } from "./identity.js";
+import { createIdentity, loadIdentity, exportIdentityHex, importIdentity, findIdentityByAddress } from "./identity.js";
 import { appendLedger } from "./ledger.js";
 
 export class Mux {
@@ -35,6 +35,25 @@ export class Mux {
     this._wire(userId, s);
     this._sessions.set(userId, s);
     return true;
+  }
+
+  /** Импорт байера по приватнику: ключ шифруется мастер-ключом и ложится в кейстор. */
+  importUser(userId: string, privateKeyHex: string): { peerId: string; buyerAddress: string } {
+    const identity = importIdentity(this._cfg.dataDir, this._cfg.masterKeyHex, privateKeyHex);
+    const s = new UserSession(userId, identity, this._cfg);
+    this._wire(userId, s);
+    this._sessions.set(userId, s);
+    return { peerId: identity.peerId, buyerAddress: identity.wallet.address };
+  }
+
+  /** Adopt: привязать юзера к байеру, чей ключ уже лежит в нашем кейсторе, по адресу. */
+  adoptUser(userId: string, address: string): { peerId: string; buyerAddress: string } | null {
+    const identity = findIdentityByAddress(this._cfg.dataDir, this._cfg.masterKeyHex, address);
+    if (!identity) return null;
+    const s = new UserSession(userId, identity, this._cfg);
+    this._wire(userId, s);
+    this._sessions.set(userId, s);
+    return { peerId: identity.peerId, buyerAddress: identity.wallet.address };
   }
 
   /** Бэкап ключа юзера (только authenticated internal flow). */
