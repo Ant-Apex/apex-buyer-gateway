@@ -2,7 +2,7 @@
 # with sha256 digests — that pinned file is what the TEE measurement covers.
 services:
   mux:
-    image: apexant/mux@sha256:b4383af260ba064d86aee39d1c9f5e244b5c53bcac079aa76d2d547f2e391f8d
+    image: apexant/mux@sha256:95b1ebac720aab3c5705c9812267f9849ff9feb01ec0211bddf500f64b867dca
     restart: unless-stopped
     volumes:
       - mux-data:/data
@@ -21,7 +21,7 @@ services:
     expose:
       - "8410"
   gw:
-    image: apexant/gw@sha256:3c332565af66530bfb55cc5a4ca00b58841cb0438711742afdaad43f27f7ff51
+    image: apexant/gw@sha256:993b59c2eb5b0b90a72c6aaf85235f435d523196dc50c0c1ad42a35eee2eefe6
     restart: unless-stopped
     depends_on:
       - mux
