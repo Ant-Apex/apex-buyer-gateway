@@ -42,6 +42,8 @@ services:
       - GW_USDC_ADDR=${GW_USDC_ADDR}
       - MUX_INTERNAL_TOKEN=${MUX_INTERNAL_TOKEN}
       - MUX_URL=${MUX_URL}
+    volumes:
+      - gw-data:/data
     ports:
       - "8420:8420"
 volumes:
