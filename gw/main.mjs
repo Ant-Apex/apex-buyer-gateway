@@ -51,6 +51,31 @@ async function readJson(req) {
   return b ? JSON.parse(b) : {};
 }
 
+// multipart/form-data → JSON: файловые поля → data-url base64, текстовые → строки.
+// нужно для /v1/images/edits: нода AntSeed ищет model в JSON-теле, multipart она не парсит.
+function multipartToJson(buf, ct) {
+  const m = String(ct).match(/boundary=([^;]+)/);
+  if (!m) return null;
+  const boundary = m[1].trim().replace(/^"|"$/g, "");
+  const bin = buf.toString("binary");
+  const parts = bin.split("--" + boundary).slice(1, -1);
+  const out = {};
+  for (const part of parts) {
+    const idx = part.indexOf("\r\n\r\n");
+    if (idx < 0) continue;
+    const head = part.slice(0, idx);
+    let body = part.slice(idx + 4);
+    if (body.endsWith("\r\n")) body = body.slice(0, -2);
+    const name = head.match(/name="([^"]+)"/)?.[1];
+    if (!name) continue;
+    if (/filename="/.test(head)) {
+      const mime = head.match(/Content-Type:\s*([^\r\n]+)/i)?.[1]?.trim() ?? "image/png";
+      out[name] = `data:${mime};base64,${Buffer.from(body, "binary").toString("base64")}`;
+    } else out[name] = body;
+  }
+  return out;
+}
+
 // бинарное тело (multipart image edit) — лимит 30MB
 async function readRaw(req) {
   const chunks = [];
@@ -447,8 +472,17 @@ createServer(async (req, res) => {
       { const ra = limImage("key:" + ka.keyId); if (ra) return limited(res, ra, true); }
       const u = db.prepare("SELECT peerId FROM users WHERE wallet=?").get(ka.wallet);
       if (!u) return json(res, 402, { error: { message: "no buyer — visit the site cabinet", code: "no_buyer" } });
-      const rawBody = await readRaw(req);
-      const ct = String(req.headers["content-type"] ?? "application/json");
+      let rawBody = await readRaw(req);
+      let ct = String(req.headers["content-type"] ?? "application/json");
+      if (ct.includes("multipart/form-data")) {
+        const fields = multipartToJson(rawBody, ct);
+        if (!fields) return json(res, 400, { error: { message: "bad multipart body" } });
+        if (!fields.image && !fields["image[]"]) return json(res, 400, { error: { message: "image field required" } });
+        if (!fields.model) return json(res, 400, { error: { message: "model field required" } });
+        if (!fields.image && fields["image[]"]) fields.image = fields["image[]"];
+        rawBody = Buffer.from(JSON.stringify(fields), "utf8");
+        ct = "application/json";
+      }
       const callMux = () => muxCall(`/u/${ka.wallet}/request`, {
         method: "POST",
         headers: {
