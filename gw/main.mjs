@@ -381,7 +381,13 @@ createServer(async (req, res) => {
         let fp = join(STATIC_ROOT, rel === "" || rel.endsWith("/") ? rel + "index.html" : rel);
         let data;
         try { data = readFileSync(fp); }
-        catch { fp = join(STATIC_ROOT, "index.html"); data = readFileSync(fp); } // SPA fallback
+        catch {
+          // КРИТИЧНО: SPA fallback только для беспутных html-навигаций. Запрос ассета
+          // (есть расширение) должен получить 404 — иначе во время редеплоев браузер
+          // кэширует index.html под видом js/css на сутки и страница ломается.
+          if (/\.[a-z0-9]+$/i.test(rel)) { res.writeHead(404); res.end("asset not found"); return; }
+          fp = join(STATIC_ROOT, "index.html"); data = readFileSync(fp);
+        }
         const ext = fp.slice(fp.lastIndexOf("."));
         res.writeHead(200, { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": ext === ".html" ? "no-cache" : "public, max-age=86400" });
         res.end(data);
