@@ -43,7 +43,7 @@ services:
       - MUX_INTERNAL_TOKEN=${MUX_INTERNAL_TOKEN}
       - MUX_URL=${MUX_URL}
     volumes:
-      - gw-data:/data
+      - gw-data:/data-gw
     ports:
       - "8420:8420"
 volumes:
