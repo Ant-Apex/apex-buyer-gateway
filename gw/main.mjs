@@ -404,6 +404,13 @@ createServer(async (req, res) => {
       return json(res, 200, cat);
     }
 
+    // venice style presets — у нас их нет; пустой список, чтобы клиент не ел 404
+    if (url.pathname === "/api/v1/image/styles" && req.method === "GET") {
+      const ka = keyAuth(req);
+      if (!ka) return json(res, 401, { error: { message: "invalid API key" } });
+      return json(res, 200, { data: [] });
+    }
+
     // venice-native image generation → OpenAI /v1/images/generations на нашем seller
     if (url.pathname === "/api/v1/image/generate" && req.method === "POST") {
       const ka = keyAuth(req);
