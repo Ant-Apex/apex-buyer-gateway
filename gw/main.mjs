@@ -406,8 +406,7 @@ createServer(async (req, res) => {
 
     // venice style presets — у нас их нет; пустой список, чтобы клиент не ел 404
     if (url.pathname === "/api/v1/image/styles" && req.method === "GET") {
-      const ka = keyAuth(req);
-      if (!ka) return json(res, 401, { error: { message: "invalid API key" } });
+      // пустой список не секретный — без авторизации, чтобы не сыпать 401 в консоль
       return json(res, 200, { data: [] });
     }
 
