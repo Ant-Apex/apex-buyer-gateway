@@ -488,6 +488,12 @@ createServer(async (req, res) => {
         if (!fields.image && fields["image[]"]) fields.image = fields["image[]"];
         rawBody = Buffer.from(JSON.stringify(fields), "utf8");
         ct = "application/json";
+      } else if (ct.includes("application/json")) {
+        // venice-конвенция modelId → AntSeed-нода ищет строго model/service
+        try {
+          const j = JSON.parse(rawBody.toString("utf8"));
+          if (j && !j.model && j.modelId) { j.model = j.modelId; rawBody = Buffer.from(JSON.stringify(j), "utf8"); }
+        } catch {}
       }
       const callMux = () => muxCall(`/u/${ka.wallet}/request`, {
         method: "POST",
