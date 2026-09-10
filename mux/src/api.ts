@@ -16,6 +16,9 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+// @ts-ignore — @types/better-sqlite3 нет в сборке, рантайм-модуль есть
+import Database from "better-sqlite3";
 import type { MuxConfig } from "./config.js";
 import type { Mux } from "./mux.js";
 import type { SerializedHttpRequest } from "@antseed/protocol/http";
@@ -148,6 +151,20 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
       }
       if (url.pathname === "/internal/stats" && req.method === "GET") {
         return send(res, 200, mux.stats());
+      }
+
+      // каналы юзера для кабинета (читаем его sessions.db напрямую)
+      if (url.pathname.startsWith("/internal/channels/") && req.method === "GET") {
+        const peerId = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+        try {
+          const dbp = join(cfg.dataDir, "users", peerId, "payments", "sessions.db");
+          const pdb = new Database(dbp, { readonly: true, fileMustExist: true });
+          const rows = pdb.prepare(`SELECT session_id, status, CAST(auth_max AS INTEGER) auth_max,
+            CAST(COALESCE(settled_amount,0) AS INTEGER) settled, deadline, updated_at
+            FROM payment_channels ORDER BY updated_at DESC LIMIT 20`).all();
+          pdb.close();
+          return send(res, 200, { channels: rows });
+        } catch { return send(res, 200, { channels: [] }); }
       }
 
       send(res, 404, { error: "not_found" });

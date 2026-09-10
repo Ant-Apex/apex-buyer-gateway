@@ -343,11 +343,10 @@ createServer(async (req, res) => {
       const u = db.prepare("SELECT peerId FROM users WHERE wallet=?").get(wallet);
       if (!u) return json(res, 200, { channels: [] });
       try {
-        const pdb = new Database(`/home/antseed/apex-gw/mux-data/users/${u.peerId}/payments/sessions.db`, { readonly: true, fileMustExist: true });
-        const rows = pdb.prepare(`SELECT session_id, status, CAST(auth_max AS INTEGER) auth_max,
-          CAST(COALESCE(settled_amount,0) AS INTEGER) settled, deadline, updated_at
-          FROM payment_channels ORDER BY updated_at DESC LIMIT 20`).all();
-        pdb.close();
+        // 2026-09-10: в CVM у gw нет доступа к mux-data — спрашиваем mux internal API
+        // (раньше тут был хардкод staging-пути /home/antseed/apex-gw — в проде всегда падал в catch)
+        const r = await muxCall(`/internal/channels/${u.peerId}`);
+        const rows = r.ok ? (await r.json()).channels ?? [] : [];
         return json(res, 200, { channels: rows.map(r => ({
           channelId: r.session_id, status: r.status,
           authorizedUsdc: (r.auth_max / 1e6).toFixed(6),
