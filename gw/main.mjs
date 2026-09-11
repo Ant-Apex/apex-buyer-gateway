@@ -26,13 +26,6 @@ const KEY_PREFIX = process.env.GW_KEY_PREFIX ?? "apx";
 
 // ── db ──
 const GW_DIR = process.env.GW_DATA_DIR ?? "./gw-data";
-// одноразовый restore: /internal/restore-data кладёт restore.db + выходит;
-// после рестарта подменяем gw.db ДО открытия
-const RESTORE_DB = join(GW_DIR, "restore.db");
-if (existsSync(RESTORE_DB)) {
-  try { renameSync(RESTORE_DB, join(GW_DIR, "gw.db")); console.log("[gw] restore.db applied as gw.db"); }
-  catch (e) { console.error("[gw] restore apply failed:", String(e).slice(0, 120)); }
-}
 const db = new Database(join(GW_DIR, "gw.db"));
 db.exec(`
 CREATE TABLE IF NOT EXISTS users(wallet TEXT PRIMARY KEY, peerId TEXT UNIQUE, created INTEGER);
@@ -41,6 +34,9 @@ CREATE TABLE IF NOT EXISTS challenges(address TEXT PRIMARY KEY, nonce TEXT, ts I
 CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY, wallet TEXT, keyId TEXT, model TEXT,
   inTok INTEGER, outTok INTEGER, cacheTok INTEGER, status INTEGER, ts INTEGER);
 `);
+// usage retention: 90d rolling (аудит 2026-09-11)
+db.prepare("DELETE FROM usage WHERE ts < ?").run(Date.now() - 90 * 24 * 3600e3);
+
 
 // ── helpers ──
 const json = (res, code, body, extra = {}) =>
@@ -109,6 +105,28 @@ function verifyToken(token) {
 function cabinetAuth(req) {
   const t = (req.headers.authorization ?? "").replace(/^Bearer /, "");
   return t ? verifyToken(t) : null;
+}
+
+// EIP-4361-lite сообщение — единый конструктор для challenge/verify/backup
+function siweMessage(address, nonce) {
+  return [
+    `${SITE_DOMAIN} wants you to sign in with your wallet:`,
+    ``,
+    address,
+    ``,
+    `No transaction, no gas, no permissions — this signature only proves ownership.`,
+    ``,
+    `URI: ${SITE_ORIGIN}`, `Version: 1`, `Chain ID: 8453`, `Nonce: ${nonce}`,
+  ].join("\n");
+}
+// проверка свежей подписи (re-auth для чувствительных операций); nonce одноразовый
+function verifyFreshSignature(address, signature) {
+  const ch = db.prepare("SELECT nonce, ts FROM challenges WHERE address=?").get((address ?? "").toLowerCase());
+  if (!ch || Date.now() - ch.ts > 10 * 60e3) return false;
+  const recovered = verifyMessage(siweMessage(address, ch.nonce), signature);
+  if (recovered.toLowerCase() !== String(address).toLowerCase()) return false;
+  db.prepare("DELETE FROM challenges WHERE address=?").run(String(address).toLowerCase());
+  return true;
 }
 
 // ── apx_ ключи ──
@@ -242,16 +260,7 @@ createServer(async (req, res) => {
     }
     if (url.pathname === "/cabinet/siwe/verify" && req.method === "POST") {
       const { address, signature } = await readJson(req);
-      const ch = db.prepare("SELECT nonce, ts FROM challenges WHERE address=?").get((address ?? "").toLowerCase());
-      if (!ch || Date.now() - ch.ts > 10 * 60e3) return json(res, 400, { error: "challenge_expired" });
-      const message = [
-        `${SITE_DOMAIN} wants you to sign in with your wallet:`, ``, address, ``,
-        `No transaction, no gas, no permissions — this signature only proves ownership.`,
-        ``, `URI: ${SITE_ORIGIN}`, `Version: 1`, `Chain ID: 8453`, `Nonce: ${ch.nonce}`,
-      ].join("\n");
-      const recovered = verifyMessage(message, signature);
-      if (recovered.toLowerCase() !== address.toLowerCase()) return json(res, 401, { error: "bad_signature" });
-      db.prepare("DELETE FROM challenges WHERE address=?").run(address.toLowerCase());
+      if (!verifyFreshSignature(address, signature)) return json(res, 401, { error: "bad_signature_or_expired_challenge" });
       return json(res, 200, { token: issueToken(address) });
     }
 
@@ -272,33 +281,6 @@ createServer(async (req, res) => {
     }
 
     // импорт существующего байера: приватник (64 hex) или adopt по адресу (0x...) если ключ в нашем кейсторе
-    // ── одноразовая миграция CVM: заливка gw.db + buyer-идентичностей ──
-    // Bearer MUX_INTERNAL_TOKEN. Пишет restore.db (подменяется при ребуте,
-    // см. boot-блок выше), идентичности проксирует в mux /internal/import,
-    // отвечает и завершает процесс — docker restart применяет restore.
-    if (url.pathname === "/internal/restore-data" && req.method === "POST") {
-      if ((req.headers.authorization ?? "") !== `Bearer ${MUX_TOKEN}`)
-        return json(res, 401, { error: "auth" });
-      let raw = ""; for await (const c of req) { raw += c; if (raw.length > 10e6) return json(res, 413, { error: "too_big" }); }
-      let body; try { body = JSON.parse(raw); } catch { return json(res, 400, { error: "bad_json" }); }
-      const report = { dbWritten: false, imported: 0, errors: [] };
-      if (body.gwDbB64) {
-        const buf = Buffer.from(String(body.gwDbB64), "base64");
-        if (buf.length < 100 || buf.length > 8e6) return json(res, 400, { error: "bad_db_size" });
-        writeFileSync(RESTORE_DB, buf, { mode: 0o600 });
-        report.dbWritten = true;
-      }
-      for (const it of body.identities ?? []) {
-        try {
-          const r = await muxCall("/internal/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ userId: it.userId, privateKey: it.privateKey }) });
-          if (r.ok) report.imported++; else report.errors.push(`${it.userId}: mux ${r.status}`);
-        } catch (e) { report.errors.push(`${it.userId}: ${String(e).slice(0, 80)}`); }
-      }
-      json(res, 200, { ok: true, ...report, restarting: report.dbWritten });
-      if (report.dbWritten) setTimeout(() => process.exit(0), 500);
-      return;
-    }
-
     if (url.pathname === "/cabinet/import-buyer" && req.method === "POST") {
       const wallet = cabinetAuth(req);
       if (!wallet) return json(res, 401, { error: "auth" });
@@ -385,9 +367,14 @@ createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
 
-    if (url.pathname === "/cabinet/backup-key" && req.method === "GET") {
+    if (url.pathname === "/cabinet/backup-key" && req.method === "POST") {
       const wallet = cabinetAuth(req);
       if (!wallet) return json(res, 401, { error: "auth" });
+      // аудит 2026-09-11: экспорт ключа требует СВЕЖЕЙ подписи — украденный 30d
+      // токен больше не равен выводу депозита
+      const { address, signature } = await readJson(req);
+      if ((address ?? "").toLowerCase() !== wallet) return json(res, 400, { error: "address_mismatch" });
+      if (!verifyFreshSignature(address, signature)) return json(res, 401, { error: "fresh_signature_required" });
       const u = db.prepare("SELECT peerId FROM users WHERE wallet=?").get(wallet);
       if (!u) return json(res, 400, { error: "no_buyer" });
       const r = await muxCall("/internal/export-key", {
@@ -667,6 +654,7 @@ createServer(async (req, res) => {
     json(res, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (!res.headersSent) json(res, 502, { error: { message: msg } }); else res.end();
+    console.error("[gw] unhandled:", msg.slice(0, 200));
+    if (!res.headersSent) json(res, 502, { error: { message: "internal error" } }); else res.end();
   }
 }).listen(PORT, HOST, () => console.log(`[gw] on http://${HOST}:${PORT}`));

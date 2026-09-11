@@ -62,6 +62,11 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
         const body = await readBody(req, cfg.maxUploadBodyBytes);
         const requestId = randomUUID();
 
+        // аудит 2026-09-11: клиент дисконнект → abort вниз по цепочке (селлер
+        // прекращает работу, биллинг останавливается)
+        const ctl = new AbortController();
+        req.on("close", () => { if (!res.writableFinished) ctl.abort(); });
+
         const sReq: SerializedHttpRequest = {
           requestId, method: targetMethod, path: targetPath, headers: fwdHeaders,
           body: new Uint8Array(body),
@@ -81,7 +86,7 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
             }
           },
           onResponseChunk: (c) => { if (headSent && c.data.length) res.write(Buffer.from(c.data)); },
-        }, req.aborted ? undefined : undefined);
+        }, ctl.signal);
 
         if (!headSent) {
           res.writeHead(sRes.statusCode, {
@@ -156,6 +161,8 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
       // каналы юзера для кабинета (читаем его sessions.db напрямую)
       if (url.pathname.startsWith("/internal/channels/") && req.method === "GET") {
         const peerId = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+        // аудит 2026-09-11: без regex тут был path traversal по sqlite (internal-only, но всё же)
+        if (!/^[0-9a-f]{40}$/.test(peerId)) return send(res, 400, { error: "bad_peer" });
         try {
           const dbp = join(cfg.dataDir, "users", peerId, "payments", "sessions.db");
           const pdb = new Database(dbp, { readonly: true, fileMustExist: true });
