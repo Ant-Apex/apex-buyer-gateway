@@ -80,8 +80,9 @@ export function loadConfig(): MuxConfig {
     usdcAddress: chain.usdcContractAddress,
     identityRegistryAddress: chain.identityRegistryAddress ?? "",
     defaultAuthDurationSecs: Number(process.env.MUX_AUTH_DURATION_SECS ?? 900),
-    maxPerRequestUsdc: BigInt(process.env.MUX_MAX_PER_REQUEST_USDC ?? "500000"),   // $0.50
-    maxReserveAmountUsdc: BigInt(process.env.MUX_MAX_RESERVE_USDC ?? "1000000"),   // $1.00
+    // "||" а не "??": пустая строка из compose-подстановки (${VAR:-}) иначе даёт BigInt("") = 0n
+    maxPerRequestUsdc: BigInt(process.env.MUX_MAX_PER_REQUEST_USDC || "500000"),   // $0.50
+    maxReserveAmountUsdc: BigInt(process.env.MUX_MAX_RESERVE_USDC || "1000000"),   // $1.00 default; cvm.env ставит 250000
     requestTimeoutMs: Number(process.env.MUX_REQUEST_TIMEOUT_MS ?? 120_000),
     maxStreamDurationMs: Number(process.env.MUX_MAX_STREAM_MS ?? 30 * 60_000),
     maxUploadBodyBytes: Number(process.env.MUX_MAX_UPLOAD_BYTES ?? 16 * 1024 * 1024),
