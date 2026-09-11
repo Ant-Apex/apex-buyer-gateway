@@ -8,7 +8,7 @@
  *
  * Кэш 60s + фоновое обновление; интерфейс sync — сеть дёргается только в фоне.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 export interface SellerPeerViewInput {
   sellerPeerId: string;
@@ -83,8 +83,9 @@ function viewFromCatalog(input: SellerPeerViewInput, catalog: any): any {
 function viewFromSellerConfig(input: SellerPeerViewInput): any {
   const view = emptyView(input);
   try {
-    const cfg = JSON.parse(readFileSync(
-      input.sellerConfigPath ?? "/home/antseed/.antseed/config.json", "utf8"));
+    const cfgPath = input.sellerConfigPath ?? "/home/antseed/.antseed/config.json";
+    if (!existsSync(cfgPath)) return view; // CVM: нет локального конфига — тихо ждём каталог
+    const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
     const providers = cfg?.seller?.providers ?? {};
     for (const [pname, pval] of Object.entries<any>(providers)) {
       const services = pval?.services ?? {};
