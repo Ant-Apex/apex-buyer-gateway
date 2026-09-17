@@ -48,9 +48,9 @@ services:
       - MUX_URL=${MUX_URL}
       # aggregate stats (gw.db + mux-data, read-only): pushed to our own receiver
       - MUX_DATA_DIR=/data-mux
-      - STATS_PUSH_URL=${STATS_PUSH_URL:-https://apex-ant.net/config-rpc/funnel}
+      - STATS_PUSH_URL=https://apex-ant.net/config-rpc/funnel
       - STATS_PUSH_TOKEN=${MUX_INTERNAL_TOKEN}
-      - STATS_PUSH_INTERVAL=${STATS_PUSH_INTERVAL:-900}
+      - STATS_PUSH_INTERVAL=900
     volumes:
       - gw-data:/data-gw
       - mux-data:/data-mux
