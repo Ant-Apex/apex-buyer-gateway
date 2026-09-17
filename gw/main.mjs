@@ -1,7 +1,7 @@
 /**
  * ▲ Apex Gateway (staging) — cabinet + OpenAI/Venice-compatible API.
- * Один процесс: SIWE-кабинет, apx_ ключи, прокси в mux, метринг.
- * STAGING ONLY — прод после TEE (декрет).
+ * One process: SIWE cabinet, apx_ keys, mux proxy, metering.
+ * Runs as a TEE-hosted buyer gateway (Phala CVM, hosted KMS).
  */
 import { createServer } from "node:http";
 import { createHmac, randomBytes, createHash } from "node:crypto";
@@ -10,7 +10,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { verifyMessage } from "ethers";
 
-// ── конфиг из env ──
+// -- config from env --
 const PORT = Number(process.env.GW_PORT ?? 8420);
 const HOST = process.env.GW_HOST ?? "127.0.0.1";
 const HMAC_SECRET = process.env.GW_HMAC_SECRET ?? (() => { throw new Error("GW_HMAC_SECRET"); })();
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS challenges(address TEXT PRIMARY KEY, nonce TEXT, ts I
 CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY, wallet TEXT, keyId TEXT, model TEXT,
   inTok INTEGER, outTok INTEGER, cacheTok INTEGER, status INTEGER, ts INTEGER);
 `);
-// usage retention: 90d rolling (аудит 2026-09-11)
+// usage retention: 90d rolling window
 db.prepare("DELETE FROM usage WHERE ts < ?").run(Date.now() - 90 * 24 * 3600e3);
 
 
@@ -55,8 +55,8 @@ async function readJson(req) {
   return b ? JSON.parse(b) : {};
 }
 
-// multipart/form-data → JSON: файловые поля → data-url base64, текстовые → строки.
-// нужно для /v1/images/edits: нода AntSeed ищет model в JSON-теле, multipart она не парсит.
+// multipart/form-data -> JSON: file fields -> base64 data-url, text fields -> strings.
+// needed for /v1/images/edits: the AntSeed node looks for `model` in a JSON body, it does not parse multipart.
 function multipartToJson(buf, ct) {
   const m = String(ct).match(/boundary=([^;]+)/);
   if (!m) return null;
@@ -80,7 +80,7 @@ function multipartToJson(buf, ct) {
   return out;
 }
 
-// бинарное тело (multipart image edit) — лимит 30MB
+// raw body (multipart image edit) - 30MB cap
 async function readRaw(req) {
   const chunks = [];
   let n = 0;
@@ -88,7 +88,7 @@ async function readRaw(req) {
   return Buffer.concat(chunks);
 }
 
-// ── SIWE-lite: challenge = подписываемое сообщение, токен = HMAC(wallet:nonce) ──
+// -- SIWE-lite: challenge = signed message, token = HMAC(wallet:nonce) --
 function issueToken(wallet) {
   const payload = `${wallet.toLowerCase()}.${Date.now()}`;
   return Buffer.from(payload).toString("base64url") + "." + hmac(payload);
@@ -107,7 +107,7 @@ function cabinetAuth(req) {
   return t ? verifyToken(t) : null;
 }
 
-// EIP-4361-lite сообщение — единый конструктор для challenge/verify/backup
+// EIP-4361-lite message - single builder for challenge/verify/backup
 function siweMessage(address, nonce) {
   return [
     `${SITE_DOMAIN} wants you to sign in with your wallet:`,
@@ -119,7 +119,7 @@ function siweMessage(address, nonce) {
     `URI: ${SITE_ORIGIN}`, `Version: 1`, `Chain ID: 8453`, `Nonce: ${nonce}`,
   ].join("\n");
 }
-// проверка свежей подписи (re-auth для чувствительных операций); nonce одноразовый
+// fresh-signature check (re-auth for sensitive operations); the nonce is single-use
 function verifyFreshSignature(address, signature) {
   const ch = db.prepare("SELECT nonce, ts FROM challenges WHERE address=?").get((address ?? "").toLowerCase());
   if (!ch || Date.now() - ch.ts > 10 * 60e3) return false;
@@ -129,7 +129,7 @@ function verifyFreshSignature(address, signature) {
   return true;
 }
 
-// ── apx_ ключи ──
+// -- apx_ keys --
 function keyAuth(req) {
   const k = (req.headers.authorization ?? "").replace(/^Bearer /, "");
   if (!k.startsWith(KEY_PREFIX + "_") && !k.startsWith("apx_test_") && !k.startsWith("apx_live_")) return null; // legacy prefixes keep working
@@ -144,7 +144,7 @@ async function muxCall(path, init = {}) {
   });
 }
 
-// ── каталог моделей (кэш 60с, фильтр на наш peer, Venice-shape адаптация) ──
+// -- model catalog (60s cache, filtered to our peer, Venice-shape adaptation) --
 let catCache = { ts: 0, data: null };
 // 2026-09-09: sell prices overlay from our public board (prices.json) — the
 // network catalog's minImageUsdPerImage is a network-wide min, NOT our price
@@ -180,8 +180,8 @@ async function modelsCatalog() {
       model_spec: {
         name: m.id,
         pricing: ours.pricing ?? undefined,
-        // 2026-09-08: реальные capabilities из нашего оффера (было capability_coverage —
-        // чуждый формат, из-за него playground видел 1 модель). Venice-shape booleans.
+        // real capabilities taken from our own offer (it used to be capability_coverage -
+        // a foreign shape, which made the playground show a single model). Venice-shape booleans.
         capabilities: (() => {
           const c = ours.capabilities ?? {};
           return {
@@ -200,24 +200,24 @@ async function modelsCatalog() {
 }
 
 // ── server ──
-// ── rate limiting (in-memory, fixed window; сбрасывается при рестарте) ──
+// -- rate limiting (in-memory, fixed window; resets on restart) --
 function makeLimiter(windowMs, max) {
   const hits = new Map();
   setInterval(() => {
     const now = Date.now();
     for (const [k, v] of hits) if (v.resetAt <= now) hits.delete(k);
   }, Math.max(windowMs, 30_000)).unref();
-  return (key) => { // 0 = ок; иначе retry-after, сек
+  return (key) => { // 0 = ok; otherwise retry-after in seconds
     const now = Date.now();
     let e = hits.get(key);
     if (!e || e.resetAt <= now) { e = { count: 0, resetAt: now + windowMs }; hits.set(key, e); }
     return ++e.count <= max ? 0 : Math.ceil((e.resetAt - now) / 1000);
   };
 }
-const limGlobal = makeLimiter(60e3, 300);   // 300/мин на IP — общий потолок
-const limAuth   = makeLimiter(600e3, 30);   // 30/10мин на IP — анти-брутфорс SIWE
-const limChat   = makeLimiter(60e3, 60);    // 60/мин на apx-ключ
-const limImage  = makeLimiter(60e3, 12);    // 12/мин на apx-ключ (дорогие генерации)
+const limGlobal = makeLimiter(60e3, 300);   // 300/min per IP - global ceiling
+const limAuth   = makeLimiter(600e3, 30);   // 30/10min per IP - SIWE brute-force guard
+const limChat   = makeLimiter(60e3, 60);    // 60/min per apx_ key
+const limImage  = makeLimiter(60e3, 12);    // 12/min per apx_ key (expensive generations)
 
 function limited(res, retryAfter, openaiShape = false) {
   res.setHeader("retry-after", String(retryAfter));
@@ -280,7 +280,7 @@ createServer(async (req, res) => {
       return json(res, 201, created);
     }
 
-    // импорт существующего байера: приватник (64 hex) или adopt по адресу (0x...) если ключ в нашем кейсторе
+    // import an existing buyer: private key (64 hex), or adopt by address (0x...) when the key lives in our keystore
     if (url.pathname === "/cabinet/import-buyer" && req.method === "POST") {
       const wallet = cabinetAuth(req);
       if (!wallet) return json(res, 401, { error: "auth" });
@@ -325,8 +325,8 @@ createServer(async (req, res) => {
       const u = db.prepare("SELECT peerId FROM users WHERE wallet=?").get(wallet);
       if (!u) return json(res, 200, { channels: [] });
       try {
-        // 2026-09-10: в CVM у gw нет доступа к mux-data — спрашиваем mux internal API
-        // (раньше тут был хардкод staging-пути /home/antseed/apex-gw — в проде всегда падал в catch)
+        // inside the CVM gw has no access to mux-data - ask the mux internal API instead
+        // (this used to hardcode the staging path /home/antseed/apex-gw, which always failed in prod)
         const r = await muxCall(`/internal/channels/${u.peerId}`);
         const rows = r.ok ? (await r.json()).channels ?? [] : [];
         return json(res, 200, { channels: rows.map(r => ({
@@ -359,7 +359,7 @@ createServer(async (req, res) => {
       db.prepare("INSERT INTO keys VALUES (?,?,?,?,0)").run(id, wallet, sha256(key), Date.now());
       return json(res, 201, { id, key, warning: "shown once — store it" });
     }
-    const kd = url.pathname.match(/^\/cabinet\/keys\/(apx_(?:[a-z]+_)?[A-Za-z0-9_-]{6})$/); // legacy apx_live_/apx_test_ и новый apx_
+    const kd = url.pathname.match(/^\/cabinet\/keys\/(apx_(?:[a-z]+_)?[A-Za-z0-9_-]{6})$/); // legacy apx_live_/apx_test_ and the new apx_ form
     if (kd && req.method === "DELETE") {
       const wallet = cabinetAuth(req);
       if (!wallet) return json(res, 401, { error: "auth" });
@@ -370,8 +370,8 @@ createServer(async (req, res) => {
     if (url.pathname === "/cabinet/backup-key" && req.method === "POST") {
       const wallet = cabinetAuth(req);
       if (!wallet) return json(res, 401, { error: "auth" });
-      // аудит 2026-09-11: экспорт ключа требует СВЕЖЕЙ подписи — украденный 30d
-      // токен больше не равен выводу депозита
+      // key export requires a FRESH signature: a stolen 30d session
+      // token no longer equals the ability to withdraw the deposit
       const { address, signature } = await readJson(req);
       if ((address ?? "").toLowerCase() !== wallet) return json(res, 400, { error: "address_mismatch" });
       if (!verifyFreshSignature(address, signature)) return json(res, 401, { error: "fresh_signature_required" });
@@ -403,9 +403,9 @@ createServer(async (req, res) => {
         let data;
         try { data = readFileSync(fp); }
         catch {
-          // КРИТИЧНО: SPA fallback только для беспутных html-навигаций. Запрос ассета
-          // (есть расширение) должен получить 404 — иначе во время редеплоев браузер
-          // кэширует index.html под видом js/css на сутки и страница ломается.
+          // CRITICAL: SPA fallback only for pathless html navigations. An asset request
+          // (one with an extension) must get a 404 - otherwise during redeploys the browser
+          // caches index.html as js/css for a day and the page breaks.
           if (/\.[a-z0-9]+$/i.test(rel)) { res.writeHead(404); res.end("asset not found"); return; }
           fp = join(STATIC_ROOT, "index.html"); data = readFileSync(fp);
         }
@@ -425,13 +425,13 @@ createServer(async (req, res) => {
       return json(res, 200, cat);
     }
 
-    // venice style presets — у нас их нет; пустой список, чтобы клиент не ел 404
+    // venice style presets - we have none; an empty list so the client does not eat a 404
     if (url.pathname === "/api/v1/image/styles" && req.method === "GET") {
-      // пустой список не секретный — без авторизации, чтобы не сыпать 401 в консоль
+      // an empty list is not a secret - served unauthenticated to keep 401s out of the console
       return json(res, 200, { data: [] });
     }
 
-    // venice-native image generation → OpenAI /v1/images/generations на нашем seller
+    // venice-native image generation -> OpenAI /v1/images/generations on our seller
     if (url.pathname === "/api/v1/image/generate" && req.method === "POST") {
       const ka = keyAuth(req);
       if (!ka) return json(res, 401, { error: { message: "invalid API key" } });
@@ -497,8 +497,8 @@ createServer(async (req, res) => {
       return json(res, 200, { balance: me?.balance ?? null });
     }
     // venice-native image EDIT: JSON {image: base64/data-url, prompt, model} →
-    // seller path /v1/images/edits (protocol detect), edge переписывает на venice
-    // /image/edit. Ответ — бинарный blob, проксируем как есть.
+    // seller path /v1/images/edits (protocol detect); the edge rewrites it to venice
+    // /image/edit. The response is a binary blob, proxied as-is.
     if (url.pathname === "/api/v1/image/edit" && req.method === "POST") {
       const ka = keyAuth(req);
       if (!ka) return json(res, 401, { error: { message: "invalid API key" } });
@@ -516,7 +516,7 @@ createServer(async (req, res) => {
         rawBody = Buffer.from(JSON.stringify(fields), "utf8");
         ct = "application/json";
       } else if (ct.includes("application/json")) {
-        // venice-конвенция modelId → AntSeed-нода ищет строго model/service
+        // venice convention: modelId -> the AntSeed node looks up model/service strictly
         try {
           const j = JSON.parse(rawBody.toString("utf8"));
           if (j && !j.model && j.modelId) { j.model = j.modelId; rawBody = Buffer.from(JSON.stringify(j), "utf8"); }
@@ -546,7 +546,7 @@ createServer(async (req, res) => {
       const buf = Buffer.from(await upstream.arrayBuffer());
       const upCt = upstream.headers.get("content-type") ?? "";
       if (!upstream.ok || !upCt.startsWith("image/")) {
-        // ошибка приходит JSON'ом — пробрасываем честно
+        // errors arrive as JSON - passed through as-is
         const ej = JSON.parse(buf.toString("utf8") || "null");
         return json(res, upstream.ok ? 502 : upstream.status, ej ?? { error: { message: "bad upstream response" } });
       }
@@ -579,7 +579,7 @@ createServer(async (req, res) => {
         body: JSON.stringify(body),
       });
 
-      // self-heal: mux рестартовал и потерял маппинг wallet→peerId → reattach и ретрай
+      // self-heal: the mux restarted and lost the wallet->peerId mapping -> reattach and retry
       if (upstream.status === 404) {
         const ej = await upstream.clone().json().catch(() => null);
         if (ej?.error === "unknown_user") {
@@ -608,7 +608,7 @@ createServer(async (req, res) => {
         });
       }
 
-      // проброс ответа (стрим как стрим)
+      // pass the response through (stream as stream)
       res.writeHead(upstream.status, {
         ...cors(),
         "content-type": upstream.headers.get("content-type") ?? "application/json",
@@ -625,11 +625,11 @@ createServer(async (req, res) => {
         if (done) break;
         const s = decoder.decode(value, { stream: true });
         res.write(Buffer.from(s, "utf8"));
-        tail = (tail + s).slice(-4000); // usage в хвосте SSE
+        tail = (tail + s).slice(-4000); // usage rides at the tail of the SSE stream
       }
       res.end();
 
-      // balanced-brace extraction: usage содержит вложенные объекты (prompt_tokens_details)
+      // balanced-brace extraction: usage holds nested objects (prompt_tokens_details)
       const ui = tail.lastIndexOf('"usage"');
       if (ui >= 0) {
         const b0 = tail.indexOf("{", ui);

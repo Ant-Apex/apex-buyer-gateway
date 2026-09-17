@@ -1,12 +1,12 @@
 /**
- * ▲ UserSession — один юзер = одно подключение к пиннутому селлеру.
+ * ▲ UserSession - one user = one connection to the pinned seller.
  *
- * Провод-совместимая сборка из публичных модулей @antseed/* — повторяет
- * wiring AntseedNode (node.js:1340-1420, 1716-1800), но без DHT, discovery,
- * router и listener'ов. Весь трафик: encrypted TCP к нашему селлеру.
+ * Wire-compatible assembly built from the public @antseed/* modules: it repeats
+ * the AntseedNode wiring (node.js:1340-1420, 1716-1800) but without DHT, discovery,
+ * router and listeners. All traffic: encrypted TCP to our own seller.
  *
- * Память: ~5-15MB на сессию (TCP socket + wallet + channel state) против
- * ~190MB полного CLI buyer-процесса. Сотни юзеров на процесс.
+ * Memory: ~5-15MB per session (TCP socket + wallet + channel state) versus
+ * ~190MB for a full CLI buyer process. Hundreds of users per process.
  */
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
@@ -82,7 +82,7 @@ export class UserSession extends EventEmitter {
        this._conn.state === ConnectionState.Authenticated);
   }
 
-  /** Идемпотентный старт: соединение + платёжный стек. */
+  /** Idempotent start: connection + payment stack. */
   async ensureOpen(cfg: MuxConfig): Promise<void> {
     if (this.isOpen) { this.lastActivity = Date.now(); return; }
     if (this._opening) return this._opening;
@@ -94,7 +94,7 @@ export class UserSession extends EventEmitter {
     const identity = this.identity;
     const sellerPeer = buildSellerPeerView(cfg) as unknown as BuyerPeerView;
 
-    // ── транспорт ──
+    // -- transport --
     const cm = await ConnectionManager.init(undefined, { requireSecureTransport: true });
     cm.setLocalIdentity(identity);
     const [host, portS] = cfg.sellerPublicAddress.split(":");
@@ -111,7 +111,7 @@ export class UserSession extends EventEmitter {
     const proxyMux = new ProxyMux(conn, { maxUploadBodyBytes: cfg.maxUploadBodyBytes });
     this._proxyMux = proxyMux;
 
-    // ── платёжный стек (зеркало node.js:1342-1382) ──
+    // -- payment stack (mirrors node.js:1342-1382) --
     const paymentsDir = join(userDir(cfg.dataDir, identity.peerId), "payments");
     const channelStore = new ChannelStore(paymentsDir);
     const bpm = new BuyerPaymentManager(identity, {
@@ -158,7 +158,7 @@ export class UserSession extends EventEmitter {
     this._negotiator = negotiator;
     this._cfgSnapshot = cfg;
 
-    // ── frame dispatch (зеркало _wireConnection) ──
+    // -- frame dispatch (mirrors _wireConnection) --
     const decoder = new FrameDecoder();
     conn.on("message", (data: Uint8Array) => {
       let frames;
@@ -186,7 +186,7 @@ export class UserSession extends EventEmitter {
       }
     });
 
-    // ── request handler (зеркало node.js:1383-1397) ──
+    // -- request handler (mirrors node.js:1383-1397) --
     this._handler = new BuyerRequestHandler({
       requestTimeoutMs: cfg.requestTimeoutMs,
       maxStreamDurationMs: cfg.maxStreamDurationMs,
@@ -194,19 +194,19 @@ export class UserSession extends EventEmitter {
       localPeerId: identity.peerId,
       negotiator,
       freeUsageManager: null,
-      verificationStorage: null,   // синтетические ре-пробы выключены (доктрина)
+      verificationStorage: null,   // synthetic re-probes are disabled by design
       verificationSampler: null,
       getConnection: async () => conn as unknown as BuyerConnection,
       getMux: () => proxyMux,
-      // verification-стораджа нет → shouldExpectResponseAuth гасит вызовы;
-      // стаб нужен только чтобы не падать на безусловном getVerificationMux.
+      // there is no verification storage -> shouldExpectResponseAuth skips the calls;
+      // the stub only exists so an unconditional getVerificationMux does not crash.
       getVerificationMux: () => ({
         waitForResponseAuth: () => new Promise(() => {}),
       }) as never,
       registerPaymentMux: (_peerId: string, mux: PaymentMux) => { this._paymentMux = mux; },
     });
 
-    // ── ждём открытия ──
+    // -- wait for open --
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("connect timeout 30s")), 30_000);
       const onState = (s: ConnectionState) => {
@@ -220,7 +220,7 @@ export class UserSession extends EventEmitter {
       conn.on("stateChange", onState);
     });
 
-    // keepalive после открытия (initiator пингует)
+    // keepalive after open (the initiator pings)
     this._keepalive = new KeepaliveManager({
       sendPing: (payload: Uint8Array) => {
         if (this.isOpen) conn.send(encodeFrame({
@@ -233,7 +233,7 @@ export class UserSession extends EventEmitter {
     this.lastActivity = Date.now();
   }
 
-  /** Отправить HTTP-запрос через канал. Коллбэки = стриминг. */
+  /** Send an HTTP request through the channel. The callbacks are the streaming hooks. */
   async sendRequest(
     cfg: MuxConfig,
     req: SerializedHttpRequest,
@@ -250,8 +250,8 @@ export class UserSession extends EventEmitter {
     return this._handler.sendRequest(sellerPeer, req, callbacks, { signal, pinned: true });
   }
 
-  /** On-chain баланс депозита юзера (available/reserved).
-   *  Работает и на холодной сессии: deposits-клиент не требует коннекта к селлеру. */
+  /** On-chain deposit balance of the user (available/reserved).
+   *  Works on a cold session too: the deposits client needs no seller connection. */
   async balance(): Promise<{ available: bigint; reserved: bigint } | null> {
     if (!this._deposits && this._cfg) {
       this._deposits = new DepositsClient({
@@ -272,8 +272,8 @@ export class UserSession extends EventEmitter {
     }
   }
 
-  /** Cooperative close: сеттлим канал с селлером и закрываем его (0x59/0x5A).
-   *  Освобождает reserved. Требует живого коннекта — открывает при необходимости. */
+  /** Cooperative close: settle the channel with the seller and close it (0x59/0x5A).
+   *  Releases the reserved amount. Needs a live connection and opens one when required. */
   async closeChannel(cfg: MuxConfig): Promise<{ status: string; finalAmount?: string }> {
     await this.ensureOpen(cfg);
     if (!this._negotiator || !this._conn) throw new Error("no payment stack");
@@ -281,7 +281,7 @@ export class UserSession extends EventEmitter {
     return { status: res?.status ?? "unknown", finalAmount: res?.finalAmount?.toString?.() };
   }
 
-  /** Глубокий сон: закрыть TCP, канал и стейт на диске остаются. */
+  /** Deep sleep: close TCP; the channel and its on-disk state remain. */
   async hibernate(): Promise<void> {
     this._keepalive?.stop();
     this._keepalive = null;

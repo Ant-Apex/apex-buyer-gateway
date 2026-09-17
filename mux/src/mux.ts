@@ -1,5 +1,5 @@
 /**
- * ▲ Mux — реестр per-user сессий: lazy-start, hibernation, spend-лэджер.
+ * ▲ Mux - registry of per-user sessions: lazy start, hibernation, spend ledger.
  */
 import { randomUUID } from "node:crypto";
 import type { MuxConfig } from "./config.js";
@@ -18,7 +18,7 @@ export class Mux {
     this._sweeper.unref();
   }
 
-  /** Новый юзер: генерим identity, возвращаем buyer-адрес для депозита. */
+  /** New user: generate an identity and return the buyer address for the deposit. */
   createUser(userId: string): { peerId: string; buyerAddress: string } {
     const identity = createIdentity(this._cfg.dataDir, this._cfg.masterKeyHex);
     const s = new UserSession(userId, identity, this._cfg);
@@ -27,7 +27,7 @@ export class Mux {
     return { peerId: identity.peerId, buyerAddress: identity.wallet.address };
   }
 
-  /** Регистрация существующего peerId под userId (после рестарта процесса). */
+  /** Register an existing peerId under a userId (after a process restart). */
   attachUser(userId: string, peerId: string): boolean {
     const identity = loadIdentity(this._cfg.dataDir, this._cfg.masterKeyHex, peerId);
     if (!identity) return false;
@@ -37,7 +37,7 @@ export class Mux {
     return true;
   }
 
-  /** Импорт байера по приватнику: ключ шифруется мастер-ключом и ложится в кейстор. */
+  /** Import a buyer from a private key: it is encrypted with the master key and stored in the keystore. */
   importUser(userId: string, privateKeyHex: string): { peerId: string; buyerAddress: string } {
     const identity = importIdentity(this._cfg.dataDir, this._cfg.masterKeyHex, privateKeyHex);
     const s = new UserSession(userId, identity, this._cfg);
@@ -46,7 +46,7 @@ export class Mux {
     return { peerId: identity.peerId, buyerAddress: identity.wallet.address };
   }
 
-  /** Adopt: привязать юзера к байеру, чей ключ уже лежит в нашем кейсторе, по адресу. */
+  /** Adopt: bind a user to a buyer whose key already sits in our keystore, looked up by address. */
   adoptUser(userId: string, address: string): { peerId: string; buyerAddress: string } | null {
     const identity = findIdentityByAddress(this._cfg.dataDir, this._cfg.masterKeyHex, address);
     if (!identity) return null;
@@ -56,7 +56,7 @@ export class Mux {
     return { peerId: identity.peerId, buyerAddress: identity.wallet.address };
   }
 
-  /** Бэкап ключа юзера (только authenticated internal flow). */
+  /** Backup of a user key (only through the authenticated internal flow). */
   exportUserKey(peerId: string): string | null {
     return exportIdentityHex(this._cfg.dataDir, this._cfg.masterKeyHex, peerId);
   }

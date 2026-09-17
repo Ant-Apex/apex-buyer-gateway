@@ -1,23 +1,23 @@
 /**
- * ▲ Internal HTTP API (loopback, bearer-auth). Гейтвей — единственный клиент.
+ * ▲ Internal HTTP API (loopback, bearer auth). The gateway is the only client.
  *
- * Прокси-контракт:
+ * Proxy contract:
  *   POST /u/:userId/request
- *     headers: x-target-method, x-target-path (+ x-fwd-* для заголовков на селлера)
+ *     headers: x-target-method, x-target-path (+ x-fwd-* for headers forwarded to the seller)
  *     body: raw bytes
- *   ← ответ селлера: status/headers/body, стримится как есть (SSE сквозной).
+ *   <- seller response: status/headers/body, streamed as-is (SSE end to end).
  *
- * Админка:
+ * Admin:
  *   POST   /internal/users            {userId} → {peerId, buyerAddress}
  *   GET    /internal/users/:userId    → {peerId, buyerAddress, balance}
- *   POST   /internal/attach           {userId, peerId} → reattach после рестарта
+ *   POST   /internal/attach           {userId, peerId} -> reattach after a restart
  *   POST   /internal/export-key       {peerId} → {identityHex}   (backup flow!)
  *   GET    /internal/stats            → {users, hotSessions}
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-// @ts-ignore — @types/better-sqlite3 нет в сборке, рантайм-модуль есть
+// @ts-ignore - @types/better-sqlite3 is not in the build, the runtime module is
 import Database from "better-sqlite3";
 import type { MuxConfig } from "./config.js";
 import type { Mux } from "./mux.js";
@@ -46,7 +46,7 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
       const url = new URL(req.url ?? "/", "http://x");
       const auth = req.headers.authorization ?? "";
 
-      // ── прокси-путь (аутентификация юзера — на гейтвее; тут internal token) ──
+      // -- proxy path (user auth happens at the gateway; here it is the internal token) --
       const m = url.pathname.match(/^\/u\/([A-Za-z0-9_-]+)\/request$/);
       if (m && req.method === "POST") {
         if (auth !== `Bearer ${cfg.internalToken}`) return send(res, 401, { error: "unauthorized" });
@@ -62,8 +62,8 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
         const body = await readBody(req, cfg.maxUploadBodyBytes);
         const requestId = randomUUID();
 
-        // аудит 2026-09-11: клиент дисконнект → abort вниз по цепочке (селлер
-        // прекращает работу, биллинг останавливается)
+        // client disconnect -> abort down the chain (the seller stops working and
+        // billing stops with it)
         const ctl = new AbortController();
         req.on("close", () => { if (!res.writableFinished) ctl.abort(); });
 
@@ -72,7 +72,7 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
           body: new Uint8Array(body),
         };
 
-        // Стримим ответ: сначала status+headers селлера, потом тело/чанки.
+        // Stream the response: seller status+headers first, then the body/chunks.
         let headSent = false;
         const sRes = await s.sendRequest(cfg, sReq, {
           onResponseStart: (r, meta) => {
@@ -98,7 +98,7 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
         return res.end();
       }
 
-      // ── админка ──
+      // -- admin --
       if (auth !== `Bearer ${cfg.internalToken}`) return send(res, 401, { error: "unauthorized" });
 
       if (url.pathname === "/internal/users" && req.method === "POST") {
@@ -158,10 +158,10 @@ export function startApi(cfg: MuxConfig, mux: Mux): void {
         return send(res, 200, mux.stats());
       }
 
-      // каналы юзера для кабинета (читаем его sessions.db напрямую)
+      // user channels for the cabinet (read straight from the user sessions.db)
       if (url.pathname.startsWith("/internal/channels/") && req.method === "GET") {
         const peerId = decodeURIComponent(url.pathname.split("/").pop() ?? "");
-        // аудит 2026-09-11: без regex тут был path traversal по sqlite (internal-only, но всё же)
+        // guard the sqlite path against traversal (internal-only route, but still)
         if (!/^[0-9a-f]{40}$/.test(peerId)) return send(res, 400, { error: "bad_peer" });
         try {
           const dbp = join(cfg.dataDir, "users", peerId, "payments", "sessions.db");

@@ -13,8 +13,8 @@ const cfg = loadConfig();
 const mux = new Mux(cfg);
 startSweeper(cfg, process.env.MUX_MASTER_KEY!);
 
-// Ре-аттачим всех известных юзеров с диска (peerId → userId=peerId по умолчанию;
-// гейтвей при первом запросе может пере-attach с реальным userId).
+// Re-attach every known user from disk (peerId -> userId=peerId by default;
+// on the first request the gateway may re-attach with the real userId).
 const usersDir = join(cfg.dataDir, "users");
 if (existsSync(usersDir)) {
   let n = 0;

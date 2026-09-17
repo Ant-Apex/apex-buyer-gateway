@@ -1,4 +1,4 @@
-// Watcher: ждёт появления venice-proxy пира в DHT, пишет endpoint + шлёт TG-алерт.
+// Watcher: waits for the venice-proxy peer to appear in the DHT, writes the endpoint and sends a TG alert.
 // Cron: */10 * * * *  node /home/antseed/monitor/peer-watch-vproxy.mjs
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -24,7 +24,7 @@ try {
 const prev = existsSync(STATE) ? JSON.parse(readFileSync(STATE, "utf8")) : null;
 if (found && !prev?.online) {
   writeFileSync(STATE, JSON.stringify({ ...found, online: true }, null, 1));
-  // TG alert через env (usepod.env уже содержит креды вотчдога)
+  // TG alert via env (usepod.env already carries the watcher credentials)
   const env = Object.fromEntries(readFileSync("/home/antseed/usepod.env", "utf8")
     .split("\n").filter(l => l.includes("=") && !l.startsWith("#"))
     .map(l => l.split("=", 2).map(s => s.trim())));
@@ -34,7 +34,7 @@ if (found && !prev?.online) {
     await fetch(`https://api.telegram.org/bot${tok}/sendMessage`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ chat_id: chat, text:
-        `🟢 venice-proxy peer ONLINE\n${TARGET}\nendpoint: ${found.host}:${found.port}\nможно funded e2e` }),
+        `🟢 venice-proxy peer ONLINE\n${TARGET}\nendpoint: ${found.host}:${found.port}\nfunded e2e possible` }),
     }).catch(() => {});
   }
   console.log("ONLINE", found.host + ":" + found.port);

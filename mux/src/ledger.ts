@@ -1,7 +1,7 @@
 /**
- * ▲ Append-only лэджер списаний. JSONL per day + running hash chain.
- * Юзер может сверить свою выписку с on-chain settle и SpendingAuth metadataHash.
- * Контент промптов сюда НЕ попадает никогда — только платёжная арифметика.
+ * ▲ Append-only spend ledger. One JSONL per day plus a running hash chain.
+ * A user can verify their statement against the on-chain settle and SpendingAuth metadataHash.
+ * Prompt content NEVER lands here - only payment arithmetic.
  */
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, openSync, readSync, fstatSync, closeSync } from "node:fs";
@@ -28,7 +28,8 @@ function dayFile(dataDir: string): string {
 
 function lastHash(file: string): string {
   if (!existsSync(file)) return "0".repeat(64);
-  // аудит 2026-09-11: читаем только хвост (было: весь файл в память на КАЖДЫЙ append)
+  // tail of the file: read only the last 8KB (this used to load the WHOLE file
+  // into memory on every single append)
   const fd = openSync(file, "r");
   let buf: Buffer;
   try {
@@ -56,7 +57,7 @@ export function appendLedger(dataDir: string, row: Omit<LedgerRow, "prevHash" | 
   appendFileSync(file, payload.slice(0, -1) + `,"hash":"${hash}"}\n`);
 }
 
-/** Суточный корень для публичной публикации (transparency). */
+/** Daily root for public publication (transparency). */
 export function dayRoot(dataDir: string, day: string): string | null {
   const file = join(dataDir, "ledger", `${day}.jsonl`);
   if (!existsSync(file)) return null;

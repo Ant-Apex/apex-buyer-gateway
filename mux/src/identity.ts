@@ -55,7 +55,7 @@ export function createIdentity(dataDir: string, masterKeyHex: string): Identity 
   return identity;
 }
 
-/** Import identity from raw private key hex. Idempotent: если уже хранится — просто вернёт. */
+/** Import an identity from a raw private-key hex. Idempotent: if it is already stored it just returns it. */
 export function importIdentity(dataDir: string, masterKeyHex: string, privateKeyHex: string): Identity {
   const clean = privateKeyHex.replace(/^0x/i, "").toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(clean)) throw new Error("invalid_private_key");
@@ -68,7 +68,7 @@ export function importIdentity(dataDir: string, masterKeyHex: string, privateKey
   return identity;
 }
 
-/** Найти identity в кейсторе по EVM-адресу (adopt flow). Null если не нашёлся. */
+/** Find an identity in the keystore by EVM address (adopt flow). Null when not found. */
 export function findIdentityByAddress(dataDir: string, masterKeyHex: string, address: string): Identity | null {
   const want = address.toLowerCase();
   const usersRoot = join(dataDir, "users");

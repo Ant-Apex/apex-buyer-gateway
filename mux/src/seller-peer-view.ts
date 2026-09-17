@@ -1,12 +1,12 @@
 /**
- * seller-peer-view: полноценный BuyerPeerView для нашего селлера.
+ * seller-peer-view: a full BuyerPeerView for our own seller.
  *
- * Два источника (по приоритету):
- *  1. MUX_CATALOG_URL — сетевой каталог (зеркало 4199 через сайт). Единственный
- *     вариант внутри TEE CVM, где нет доступа к конфигу селлера.
- *  2. Локальный config.json селлера (VPS staging).
+ * Two sources, in priority order:
+ *  1. MUX_CATALOG_URL - the network catalog (a mirror of port 4199 via the website). The only
+ *     option inside the TEE CVM, where the seller config is not reachable.
+ *  2. The local seller config.json (VPS staging).
  *
- * Кэш 60s + фоновое обновление; интерфейс sync — сеть дёргается только в фоне.
+ * 60s cache + background refresh; the interface is sync, so the network is touched in the background only.
  */
 import { existsSync, readFileSync } from "node:fs";
 
@@ -36,7 +36,7 @@ function emptyView(input: SellerPeerViewInput): any {
   };
 }
 
-/** Каталог (v1/models aggregate): наши офферы по peerId → BuyerPeerView. */
+/** Catalog (v1/models aggregate): our offers by peerId -> BuyerPeerView. */
 function viewFromCatalog(input: SellerPeerViewInput, catalog: any): any {
   const view = emptyView(input);
   const pfx = input.sellerPeerId.slice(0, 10);
@@ -79,12 +79,12 @@ function viewFromCatalog(input: SellerPeerViewInput, catalog: any): any {
   return view;
 }
 
-/** Локальный config.json (VPS): services.* → BuyerPeerView. */
+/** Local config.json (VPS): services.* -> BuyerPeerView. */
 function viewFromSellerConfig(input: SellerPeerViewInput): any {
   const view = emptyView(input);
   try {
     const cfgPath = input.sellerConfigPath ?? "/home/antseed/.antseed/config.json";
-    if (!existsSync(cfgPath)) return view; // CVM: нет локального конфига — тихо ждём каталог
+    if (!existsSync(cfgPath)) return view;
     const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
     const providers = cfg?.seller?.providers ?? {};
     for (const [pname, pval] of Object.entries<any>(providers)) {
@@ -129,9 +129,9 @@ async function refreshRemote(input: SellerPeerViewInput): Promise<void> {
 
 export function buildSellerPeerView(input: SellerPeerViewInput): any {
   if (CATALOG_URL) {
-    // Фон: обновить кэш сети. Синхронно отдаём что есть; на самом первом
-    // вызове после старта кэша может не быть — тогда (и только тогда) читаем
-    // локальный конфиг как стартовую заглушку, если он вообще есть.
+    // Background: refresh the network cache. Synchronously we return what we have; on the very first
+    // call after start there may be no cache - then, and only then, we read the
+    // local config as a starting placeholder, if it exists at all.
     if (Date.now() - cache.ts > 60_000) void refreshRemote(input);
     if (cache.view) return cache.view;
     return viewFromSellerConfig(input);
