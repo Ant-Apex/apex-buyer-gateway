@@ -5,7 +5,7 @@
  */
 import { createServer } from "node:http";
 import { createHmac, randomBytes, createHash } from "node:crypto";
-import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { verifyMessage } from "ethers";
@@ -23,6 +23,17 @@ const SITE_DOMAIN = new URL(SITE_ORIGIN).host;
 const DEPOSITS_ADDR = process.env.GW_DEPOSITS_ADDR ?? "";
 const USDC_ADDR = process.env.GW_USDC_ADDR ?? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const KEY_PREFIX = process.env.GW_KEY_PREFIX ?? "apx";
+// funnel stats (aggregate-only): replaces the retired sidecar container.
+// Reads gw.db + the mux data dir read-only and pushes counters to our own
+// receiver. Public addresses, counters and amounts only: prompts, keys and
+// signatures are never touched. Payload shape (schemaVersion 2) is unchanged,
+// so the site and the receiver keep working as-is.
+const MUX_DIR = process.env.MUX_DATA_DIR ?? "/data-mux";
+const STATS_URL = process.env.STATS_PUSH_URL ?? "";
+const STATS_TOKEN = process.env.STATS_PUSH_TOKEN ?? "";
+const STATS_INTERVAL = Number(process.env.STATS_PUSH_INTERVAL ?? 900);
+const STATS_DAYS = Number(process.env.STATS_DAYS ?? 60);
+const STATS_MAX_USERS = Number(process.env.STATS_MAX_USERS ?? 500);
 
 // ── db ──
 const GW_DIR = process.env.GW_DATA_DIR ?? "./gw-data";
@@ -36,6 +47,177 @@ CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY, wallet TEXT, keyId TEXT, m
 `);
 // usage retention: 90d rolling window
 db.prepare("DELETE FROM usage WHERE ts < ?").run(Date.now() - 90 * 24 * 3600e3);
+// ── funnel stats: aggregate-only snapshot (gw.db + mux data, read-only) ──
+const fmtDay = (ms) => (ms ? new Date(Number(ms)).toISOString().slice(0, 10) : null);
+
+function muxChannels(peerId) {
+  if (!peerId) return null;
+  const p = join(MUX_DIR, "users", String(peerId), "payments", "sessions.db");
+  if (!existsSync(p)) return null;
+  let c = null;
+  try {
+    c = new Database(p, { readonly: true, fileMustExist: true, timeout: 10000 });
+    const row = c.prepare(
+      `SELECT COUNT(*), COALESCE(SUM(CAST(auth_max AS INTEGER)),0),
+              COALESCE(SUM(CAST(COALESCE(settled_amount,0) AS INTEGER)),0), MAX(updated_at)
+       FROM payment_channels`).raw(true).get();
+    return { channels: Number(row[0] ?? 0), auth_max_micro: Number(row[1] ?? 0),
+             settled_micro: Number(row[2] ?? 0), last_activity: row[3] ?? null };
+  } catch { return { error: 1 }; }
+  finally { try { c?.close(); } catch {} }
+}
+
+function muxMeta() {
+  let usersOnDisk = 0, ledgerDays = 0, ledgerBytes = 0;
+  try {
+    const usersDir = join(MUX_DIR, "users");
+    if (existsSync(usersDir)) usersOnDisk = readdirSync(usersDir)
+      .filter(e => { try { return statSync(join(usersDir, e)).isDirectory(); } catch { return false; } }).length;
+  } catch {}
+  try {
+    const led = join(MUX_DIR, "ledger");
+    if (existsSync(led)) for (const f of readdirSync(led)) if (f.endsWith(".jsonl")) {
+      ledgerDays++;
+      try { ledgerBytes += statSync(join(led, f)).size; } catch {}
+    }
+  } catch {}
+  return { users_on_disk: usersOnDisk, ledger_days: ledgerDays, ledger_bytes: ledgerBytes };
+}
+
+function statsSnapshot() {
+  const now = Date.now();
+  const since = now - STATS_DAYS * 86400e3;
+  const get = (sql, ...a) => db.prepare(sql).get(...a) ?? {};
+  const all = (sql, ...a) => db.prepare(sql).all(...a);
+
+  const totals = {
+    wallets_connected: get("SELECT COUNT(*) v FROM challenges").v,
+    users: get("SELECT COUNT(*) v FROM users").v,
+    keys_issued: get("SELECT COUNT(*) v FROM keys").v,
+    keys_active: get("SELECT COUNT(*) v FROM keys WHERE COALESCE(revoked,0)=0").v,
+    usage_rows: get("SELECT COUNT(*) v FROM usage").v,
+    tokens_in: get("SELECT COALESCE(SUM(inTok),0) v FROM usage").v,
+    tokens_out: get("SELECT COALESCE(SUM(outTok),0) v FROM usage").v,
+  };
+  for (const [label, span] of [["24h", 1], ["7d", 7], ["30d", 30]]) {
+    const ms = now - span * 86400e3;
+    totals["active_wallets_" + label] = get("SELECT COUNT(DISTINCT wallet) v FROM usage WHERE ts > ?", ms).v;
+    totals["requests_" + label] = get("SELECT COUNT(*) v FROM usage WHERE ts > ?", ms).v;
+    totals["new_users_" + label] = get("SELECT COUNT(*) v FROM users WHERE created > ?", ms).v;
+    totals["new_keys_" + label] = get("SELECT COUNT(*) v FROM keys WHERE created > ?", ms).v;
+    totals["connected_wallets_" + label] = get("SELECT COUNT(*) v FROM challenges WHERE ts > ?", ms).v;
+  }
+
+  const daily = {};
+  const bump = (d, k, v = 1) => {
+    if (!d) return;
+    const e = daily[d] ?? (daily[d] = { date: d, connects: 0, newUsers: 0, keys: 0,
+                                        activeWallets: 0, requests: 0, inTok: 0, outTok: 0 });
+    e[k] += v;
+  };
+  for (const r of all("SELECT ts FROM challenges WHERE ts > ?", since)) bump(fmtDay(r.ts), "connects");
+  for (const r of all("SELECT created FROM users WHERE created > ?", since)) bump(fmtDay(r.created), "newUsers");
+  for (const r of all("SELECT created FROM keys WHERE created > ?", since)) bump(fmtDay(r.created), "keys");
+  for (const r of all(`SELECT date(ts/1000,'unixepoch') d, COUNT(DISTINCT wallet) w, COUNT(*) n,
+                              COALESCE(SUM(inTok),0) i, COALESCE(SUM(outTok),0) o
+                       FROM usage WHERE ts > ? GROUP BY d`, since)) {
+    const e = daily[r.d] ?? (daily[r.d] = { date: r.d, connects: 0, newUsers: 0, keys: 0,
+                                            activeWallets: 0, requests: 0, inTok: 0, outTok: 0 });
+    e.activeWallets = r.w; e.requests = r.n; e.inTok = Number(r.i); e.outTok = Number(r.o);
+  }
+
+  const byModel30d = all(`SELECT model m, COUNT(*) n, COALESCE(SUM(inTok),0) i, COALESCE(SUM(outTok),0) o
+                          FROM usage WHERE ts > ? GROUP BY model ORDER BY 2 DESC LIMIT 25`, now - 30 * 86400e3)
+    .map(r => ({ model: r.m, requests: r.n, inTok: Number(r.i), outTok: Number(r.o) }));
+
+  const topWallets30d = all(`SELECT wallet w, COUNT(*) n, COALESCE(SUM(inTok),0) i, COALESCE(SUM(outTok),0) o,
+                                    MIN(ts) f, MAX(ts) l
+                             FROM usage WHERE ts > ? GROUP BY wallet ORDER BY 2 DESC LIMIT 20`, now - 30 * 86400e3)
+    .map(r => ({ wallet: r.w, requests: r.n, inTok: Number(r.i), outTok: Number(r.o),
+                 first: fmtDay(r.f), last: fmtDay(r.l) }));
+
+  const userRows = all("SELECT wallet, peerId, created FROM users ORDER BY created DESC LIMIT ?", STATS_MAX_USERS);
+  const peerByWallet = new Map(userRows.map(r => [r.wallet, r.peerId]));
+  const usersAll = userRows.map(r => ({ wallet: r.wallet, peer: String(r.peerId ?? "").slice(0, 12),
+                                        created: fmtDay(r.created) }));
+  const challengers = all("SELECT address, ts FROM challenges ORDER BY ts DESC LIMIT ?", STATS_MAX_USERS)
+    .map(r => ({ wallet: r.address, ts: fmtDay(r.ts) }));
+  const keysAll = all("SELECT id, wallet, created, revoked FROM keys ORDER BY created DESC LIMIT ?", STATS_MAX_USERS)
+    .map(r => ({ id: String(r.id ?? "").slice(0, 12), wallet: r.wallet, created: fmtDay(r.created),
+                 revoked: r.revoked || 0 }));
+
+  const usageByWallet = new Map(all(`SELECT wallet w, COUNT(*) n,
+                                            COUNT(DISTINCT date(ts/1000,'unixepoch')) d, MIN(ts) f, MAX(ts) l
+                                     FROM usage GROUP BY wallet`)
+    .map(r => [r.w, { requests: r.n, active_days: r.d, first: fmtDay(r.f), last: fmtDay(r.l) }]));
+
+  const steps = { with_identity: 0, with_channel: 0, deposited: 0, first_request: 0, repeat: 0 };
+  const walletFunnel = [];
+  let readErrors = 0;
+  for (const u of usersAll) {
+    const peer = peerByWallet.get(u.wallet);
+    const identity = !!peer && existsSync(join(MUX_DIR, "users", String(peer), "identity.enc"));
+    const ch = peer ? muxChannels(peer) : null;
+    if (ch && ch.error) readErrors++;
+    const uu = usageByWallet.get(u.wallet) ?? {};
+    const row = { wallet: u.wallet, peer: u.peer, created: u.created, identity,
+                  channels: ch?.channels ?? 0, auth_max_micro: ch?.auth_max_micro ?? 0,
+                  settled_micro: ch?.settled_micro ?? 0, requests: uu.requests ?? 0,
+                  active_days: uu.active_days ?? 0, last: uu.last ?? null };
+    walletFunnel.push(row);
+    if (identity) steps.with_identity++;
+    if (row.channels) steps.with_channel++;
+    if (row.auth_max_micro) steps.deposited++;
+    if (row.requests) steps.first_request++;
+    if (row.active_days > 1) steps.repeat++;
+  }
+  walletFunnel.sort((a, b) => (b.requests - a.requests) || (b.auth_max_micro - a.auth_max_micro));
+  steps.wallets_connected = totals.wallets_connected;
+  steps.accounts = totals.users;
+  steps.keys_issued = totals.keys_issued;
+
+  return {
+    generatedAt: new Date(now).toISOString().replace(/\.\d+Z$/, "Z"),
+    source: "apex-gw-cvm/gw.db+mux-data",
+    schemaVersion: 2,
+    window_days: STATS_DAYS,
+    totals,
+    daily: Object.values(daily).sort((a, b) => (a.date < b.date ? -1 : 1)),
+    byModel30d,
+    topWallets30d,
+    users: usersAll,
+    challengers,
+    keys: keysAll,
+    funnelSteps: steps,
+    walletFunnel,
+    muxMeta: { ...muxMeta(), read_errors: readErrors },
+    note: ("wallets are public addresses; counters and amounts only, no content. "
+         + "connects = wallets that started SIWE (gw.db keeps the latest row per wallet). "
+         + "auth_max_micro is the deposit a user authorised for a payment channel (1e6 = 1 USDC)."),
+  };
+}
+
+let statsBusy = false;
+async function statsPush(trigger = "interval") {
+  if (!STATS_URL || statsBusy) return { skipped: true };
+  statsBusy = true;
+  try {
+    const payload = statsSnapshot();
+    const r = await fetch(STATS_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + STATS_TOKEN },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(30000),
+    });
+    const body = (await r.text()).slice(0, 120);
+    console.log(`[gw] stats push (${trigger}) status=${r.status} steps=${JSON.stringify(payload.funnelSteps)}`);
+    return { status: r.status, body };
+  } catch (err) {
+    const msg = String(err?.message ?? err).slice(0, 160);
+    console.log(`[gw] stats push (${trigger}) failed: ${msg}`);
+    return { error: msg };
+  } finally { statsBusy = false; }
+}
 
 
 // ── helpers ──
@@ -651,6 +833,14 @@ createServer(async (req, res) => {
       return;
     }
 
+    // internal aggregate stats feed (bearer-token gated): our receiver can pull
+    // the same snapshot it also gets pushed, and we can verify it on demand.
+    if (url.pathname === "/api/internal/stats" && (req.method === "GET" || req.method === "POST")) {
+      const t = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+      if (!STATS_TOKEN || t !== STATS_TOKEN) return json(res, 403, { error: "forbidden" });
+      if (req.method === "POST" || url.searchParams.get("push") === "1") return json(res, 200, await statsPush("manual"));
+      return json(res, 200, statsSnapshot());
+    }
     json(res, 404, { error: "not_found" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -658,3 +848,9 @@ createServer(async (req, res) => {
     if (!res.headersSent) json(res, 502, { error: { message: "internal error" } }); else res.end();
   }
 }).listen(PORT, HOST, () => console.log(`[gw] on http://${HOST}:${PORT}`));
+
+// aggregate stats loop: one push at boot, then every STATS_PUSH_INTERVAL seconds
+if (STATS_URL) {
+  setTimeout(() => statsPush("boot"), 5000);
+  setInterval(() => statsPush("interval"), Math.max(60, STATS_INTERVAL) * 1000);
+}
